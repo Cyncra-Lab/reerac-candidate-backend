@@ -3,6 +3,7 @@ import {
   OnModuleInit,
   Logger,
   UnauthorizedException,
+  ConflictException,
 } from '@nestjs/common';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
@@ -70,7 +71,7 @@ export class AuthService implements OnModuleInit {
 
   /**
    * Upsert talent identity for a local Better Auth user.
-   * `id` is the candidate-api Better Auth user id.
+   * Claims SHADOW (pre-signup / migrated) rows by email.
    */
   async ensureCandidate(authUser: {
     id: string;
@@ -79,7 +80,7 @@ export class AuthService implements OnModuleInit {
     firstName?: string;
     lastName?: string;
   }) {
-    const email = authUser.email.toLowerCase();
+    const email = authUser.email.toLowerCase().trim();
     const parts = (authUser.name || '').trim().split(/\s+/);
     const firstName = authUser.firstName || parts[0] || 'Candidate';
     const lastName =
@@ -89,23 +90,40 @@ export class AuthService implements OnModuleInit {
       where: { authUserId: authUser.id },
     });
     if (byAuth) {
-      if (byAuth.email !== email) {
-        return this.prisma.candidate.update({
-          where: { id: byAuth.id },
-          data: { email, firstName, lastName },
-        });
-      }
-      return byAuth;
+      const data: {
+        email?: string;
+        firstName?: string;
+        lastName?: string;
+        accountStatus?: 'ACTIVE';
+      } = {};
+      if (byAuth.email !== email) data.email = email;
+      if (!byAuth.firstName && firstName) data.firstName = firstName;
+      if (!byAuth.lastName && lastName) data.lastName = lastName;
+      if (byAuth.accountStatus !== 'ACTIVE') data.accountStatus = 'ACTIVE';
+      if (Object.keys(data).length === 0) return byAuth;
+      return this.prisma.candidate.update({
+        where: { id: byAuth.id },
+        data,
+      });
     }
 
-    const byEmail = await this.prisma.candidate.findFirst({
+    const byEmail = await this.prisma.candidate.findUnique({
       where: { email },
     });
+
     if (byEmail) {
+      if (byEmail.authUserId && byEmail.authUserId !== authUser.id) {
+        throw new ConflictException(
+          'An account already exists for this email. Sign in instead.',
+        );
+      }
+
+      // Claim SHADOW or unlinked row → ACTIVE
       return this.prisma.candidate.update({
         where: { id: byEmail.id },
         data: {
           authUserId: authUser.id,
+          accountStatus: 'ACTIVE',
           firstName: byEmail.firstName || firstName,
           lastName: byEmail.lastName || lastName,
         },
@@ -118,6 +136,8 @@ export class AuthService implements OnModuleInit {
         email,
         firstName,
         lastName,
+        accountStatus: 'ACTIVE',
+        source: 'SIGNUP',
         profile: { create: {} },
       },
     });

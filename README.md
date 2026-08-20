@@ -31,6 +31,7 @@ Default port: `4100`. Docs: `http://localhost:4100/docs`.
 | `BETTER_AUTH_TRUSTED_ORIGINS` | Extra origins (comma-separated); `FRONTEND_URL` is always trusted |
 | `B2B_API_URL` | B2B API base including `/v1` (apply bridge + internal jobs) |
 | `B2B_SERVICE_TOKEN` | Service token for `/internal/*` |
+| `B2B_DATABASE_URL` | B2B Postgres (migration script only — read applicants + backfill) |
 | `RESEND_API_KEY` | Email OTP + lifecycle mail (optional in local; OTP logged if unset) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional Google OAuth |
 
@@ -70,3 +71,48 @@ Next.js rewrites (same-origin cookies):
 - Jobs: `B2B_API_URL` + `B2B_SERVICE_TOKEN` → `/internal/jobs`
 - Applications: → `/internal/applications`
 - Events: Redis stream `reerac:b2b:events` (optional)
+
+## Shadow candidates and B2B migration
+
+Talent who applied (or had a legacy B2B `CANDIDATE` user) before B2C signup are stored as **SHADOW** candidates (`authUserId` null). On signup, `ensureCandidate` claims the row by email → `ACTIVE`.
+
+### Schema
+
+```bash
+npx prisma db push
+# or migrate deploy after reviewing SQL
+```
+
+If `db push` fails on `@@unique([email])`, dedupe first:
+
+```sql
+SELECT lower(email) AS e, count(*) FROM candidates GROUP BY 1 HAVING count(*) > 1;
+```
+
+### Run migration (idempotent)
+
+1. Set `DATABASE_URL` (candidate-api) and `B2B_DATABASE_URL` (B2B Postgres; needs read on applicants/users/jobs/companies and **update** on `applicants.externalCandidateId`).
+2. Dry-run:
+
+```bash
+npm run migrate:b2b-candidates:dry
+```
+
+3. Apply:
+
+```bash
+npm run migrate:b2b-candidates
+```
+
+### Post-migration checks
+
+```sql
+-- candidate-api
+SELECT "accountStatus", count(*) FROM candidates GROUP BY 1;
+SELECT count(*) FROM applications WHERE "b2bApplicantId" IS NOT NULL;
+
+-- B2B
+SELECT count(*) FROM applicants WHERE "externalCandidateId" IS NOT NULL AND "deletedAt" IS NULL;
+```
+
+Manual claim test: pick a SHADOW email that has applications → sign up at `/signup?account=candidate` with that email → row becomes `ACTIVE` with same `id` and applications retained.
