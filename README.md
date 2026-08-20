@@ -32,7 +32,8 @@ Default port: `4100`. Docs: `http://localhost:4100/docs`.
 | `B2B_API_URL` | B2B API base including `/v1` (apply bridge + internal jobs) |
 | `B2B_SERVICE_TOKEN` | Service token for `/internal/*` |
 | `B2B_DATABASE_URL` | B2B Postgres (migration script only — read applicants + backfill) |
-| `RESEND_API_KEY` | Email OTP + lifecycle mail (optional in local; OTP logged if unset) |
+| `RESEND_API_KEY` | Email OTP + lifecycle mail |
+| `RESEND_FROM_EMAIL` | Verified sender, e.g. `Reerac AI <no-reply@notifications.reerac.ng>` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional Google OAuth |
 
 ## Frontend (reerac-ai)

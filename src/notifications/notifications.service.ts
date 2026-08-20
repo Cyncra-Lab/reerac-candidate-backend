@@ -58,7 +58,7 @@ export class NotificationsService {
       return;
     }
     await this.resend.emails.send({
-      from: 'Reerac <noreply@reerac.com>',
+      from: this.config.resendFromEmail,
       to,
       subject,
       text: body,
