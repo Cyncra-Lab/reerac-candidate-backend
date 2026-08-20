@@ -1,0 +1,370 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Better Auth ───
+
+model auth_user {
+  id            String   @id
+  name          String
+  email         String
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions  auth_session[]
+  accounts  auth_account[]
+
+  @@unique([email])
+  @@map("auth_user")
+}
+
+model auth_session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+
+  user auth_user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("auth_session")
+}
+
+model auth_account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user auth_user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_account")
+}
+
+model auth_verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("auth_verification")
+}
+
+// ─── Candidate talent identity ───
+
+model Candidate {
+  id           String   @id @default(cuid())
+  /// Platform auth user id (B2B Better Auth). Not a local FK — one shared login.
+  authUserId   String   @unique
+  email        String
+  firstName    String
+  lastName     String
+  phone        String?
+  linkedInUrl  String?
+  location     String?
+  roleInterest String?
+  experienceLevel String?
+  /// Marketing / lifecycle email opt-in (in-app notifications still delivered).
+  lifecycleEmailOptIn Boolean @default(true)
+  /// Set when PROFILE_VERIFICATION is purchased.
+  verifiedAt DateTime?
+  /// VISIBILITY_BOOST active until this timestamp.
+  visibilityBoostUntil DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile        CandidateProfile?
+  cvAssets       CvAsset[]
+  cvScores       CvScore[]
+  applications   Application[]
+  matchScores    MatchScore[]
+  mockSessions   MockInterviewSession[]
+  payments       Payment[]
+  subscriptions  Subscription[]
+  notifications  Notification[]
+  whatsAppOptIn  WhatsAppOptIn?
+  entitlements   Entitlement[]
+
+  @@index([email])
+  @@map("candidates")
+}
+
+model CandidateProfile {
+  id              String   @id @default(cuid())
+  candidateId     String   @unique
+  summary         String?  @db.Text
+  skills          String[]
+  yearsExperience Int?
+  updatedAt       DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("candidate_profiles")
+}
+
+model CvAsset {
+  id          String   @id @default(cuid())
+  candidateId String
+  url         String
+  fileName    String
+  isPrimary   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  scores    CvScore[]
+
+  @@index([candidateId])
+  @@map("cv_assets")
+}
+
+model CvScore {
+  id           String   @id @default(cuid())
+  candidateId  String
+  cvAssetId    String?
+  overallScore Int
+  strengths    String[]
+  improvements String[]
+  summary      String?  @db.Text
+  /// Optimized CV text / rewrite notes after CV_OPTIMIZATION purchase.
+  optimizedContent String? @db.Text
+  source       String   @default("UPLOAD")
+  createdAt    DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  cvAsset   CvAsset?  @relation(fields: [cvAssetId], references: [id], onDelete: SetNull)
+
+  @@index([candidateId])
+  @@map("cv_scores")
+}
+
+// ─── Job catalog projection (from B2B) ───
+
+model JobListing {
+  id               String   @id
+  b2bJobId         String   @unique
+  companyName      String
+  title            String
+  department       String?
+  location         String?
+  workMode         String?
+  type             String?
+  salaryMin        Int?
+  salaryMax        Int?
+  currency         String   @default("NGN")
+  description      String   @db.Text
+  requirements     String[]
+  responsibilities String[]
+  status           String
+  closingDate      DateTime?
+  syncedAt         DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  applications Application[]
+  matchScores  MatchScore[]
+
+  @@index([status])
+  @@index([title])
+  @@map("job_listings")
+}
+
+enum CandidateApplicationStatus {
+  APPLIED
+  IN_REVIEW
+  SCREENING
+  IN_PROCESS
+  INTERVIEWED
+  SHORTLISTED
+  HIRED
+  NOT_SELECTED
+}
+
+model Application {
+  id                String                     @id @default(cuid())
+  candidateId       String
+  jobListingId      String
+  b2bApplicantId    String?                    @unique
+  status            CandidateApplicationStatus @default(APPLIED)
+  matchPercent      Int?
+  relativeRankLabel String?
+  appliedAt         DateTime                   @default(now())
+  lastSyncedAt      DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  candidate  Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobListing JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, jobListingId])
+  @@index([candidateId])
+  @@index([status])
+  @@map("applications")
+}
+
+model MatchScore {
+  id                String   @id @default(cuid())
+  candidateId       String
+  jobListingId      String
+  matchPercent      Int
+  relativeRankLabel String?
+  rationale         String?  @db.Text
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  candidate  Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobListing JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, jobListingId])
+  @@index([candidateId, matchPercent])
+  @@map("match_scores")
+}
+
+// ─── Mock interviews & billing ───
+
+model MockInterviewSession {
+  id          String    @id @default(cuid())
+  candidateId String
+  roleTitle   String
+  status      String    @default("PENDING")
+  score       Int?
+  feedback    String?   @db.Text
+  turns       Json?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
+  @@map("mock_interview_sessions")
+}
+
+enum PaymentSku {
+  VISIBILITY_BOOST
+  PROFILE_VERIFICATION
+  CV_OPTIMIZATION
+  LINKEDIN_HANDOFF
+  MOCK_INTERVIEW_PACK
+  PREMIUM_WHATSAPP
+  ALL_ACCESS
+}
+
+model Payment {
+  id            String     @id @default(cuid())
+  candidateId   String
+  sku           PaymentSku
+  amountNgn     Int
+  currency      String     @default("NGN")
+  status        String     @default("PENDING")
+  paystackRef   String?    @unique
+  metadata      Json?
+  createdAt     DateTime   @default(now())
+  paidAt        DateTime?
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
+  @@map("payments")
+}
+
+model Subscription {
+  id               String    @id @default(cuid())
+  candidateId      String
+  plan             String
+  status           String    @default("ACTIVE")
+  currentPeriodEnd DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
+  @@map("subscriptions")
+}
+
+model Entitlement {
+  id          String    @id @default(cuid())
+  candidateId String
+  sku         PaymentSku
+  remaining   Int       @default(0)
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, sku])
+  @@map("entitlements")
+}
+
+model Notification {
+  id          String    @id @default(cuid())
+  candidateId String
+  type        String
+  title       String
+  body        String    @db.Text
+  link        String?
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId, readAt])
+  @@map("notifications")
+}
+
+model WhatsAppOptIn {
+  id          String   @id @default(cuid())
+  candidateId String   @unique
+  phone       String
+  optedIn     Boolean  @default(true)
+  premium     Boolean  @default(false)
+  community   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_optins")
+}
+
+model ProcessedEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  eventType   String
+  processedAt DateTime @default(now())
+
+  @@map("processed_events")
+}
+
+model NotificationCampaignLog {
+  id          String   @id @default(cuid())
+  candidateId String
+  campaign    String
+  sentAt      DateTime @default(now())
+
+  @@index([candidateId, campaign, sentAt])
+  @@map("notification_campaign_logs")
+}
