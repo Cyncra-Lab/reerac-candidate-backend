@@ -18,7 +18,12 @@ export class AppConfigService {
   }
 
   get betterAuthUrl(): string {
-    return this.config.get<string>('BETTER_AUTH_URL', 'http://localhost:4100')!;
+    // Must be the browser-facing site origin (Next), not the Railway API host.
+    // Auth is served via Next rewrite at /api/candidate-auth.
+    return this.config.get<string>(
+      'BETTER_AUTH_URL',
+      this.frontendUrl,
+    )!;
   }
 
   get betterAuthTrustedOrigins(): string[] {

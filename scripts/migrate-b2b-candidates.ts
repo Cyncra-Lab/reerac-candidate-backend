@@ -6,10 +6,53 @@
  *   B2B_DATABASE_URL=... DATABASE_URL=... npx tsx scripts/migrate-b2b-candidates.ts --dry-run
  *   B2B_DATABASE_URL=... DATABASE_URL=... npx tsx scripts/migrate-b2b-candidates.ts
  *
+ * Or add both URLs to candidate-api/.env and run:
+ *   npm run migrate:b2b-candidates:dry
+ *
  * Requires schema with optional authUserId, accountStatus, unique email (prisma db push).
  */
 
+import { readFileSync, existsSync } from 'fs';
+import { resolve } from 'path';
 import { PrismaClient, Prisma, type CandidateApplicationStatus } from '@prisma/client';
+
+/** Load KEY=VALUE pairs from .env into process.env (does not override existing). */
+function loadDotEnv(file = resolve(process.cwd(), '.env')) {
+  if (!existsSync(file)) return;
+  const text = readFileSync(file, 'utf8');
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadDotEnv();
+
+function cleanDbUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  let v = raw.trim();
+  // cmd `set VAR="url"` keeps the quotes in the value
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v || undefined;
+}
 
 type B2bApplicantRow = {
   id: string;
@@ -119,14 +162,22 @@ function pickBestApplicant(
 }
 
 async function main() {
-  const b2bUrl = process.env.B2B_DATABASE_URL;
-  const candidateUrl = process.env.DATABASE_URL;
+  const b2bUrl = cleanDbUrl(process.env.B2B_DATABASE_URL);
+  const candidateUrl = cleanDbUrl(process.env.DATABASE_URL);
 
   if (!b2bUrl) {
     throw new Error('Set B2B_DATABASE_URL (B2B Postgres connection string)');
   }
   if (!candidateUrl) {
     throw new Error('Set DATABASE_URL (candidate-api Postgres connection string)');
+  }
+  if (
+    !candidateUrl.startsWith('postgresql://') &&
+    !candidateUrl.startsWith('postgres://')
+  ) {
+    throw new Error(
+      `DATABASE_URL must start with postgresql:// (got: ${candidateUrl.slice(0, 24)}…). In cmd.exe do not wrap with quotes when using set, or rely on .env only.`,
+    );
   }
 
   const b2b = new PrismaClient({
@@ -252,6 +303,7 @@ async function main() {
       ),
     ];
 
+    console.log(`Loading ${jobIds.length} jobs from B2B…`);
     const jobsById = new Map<string, B2bJobRow>();
     if (jobIds.length) {
       const jobs = await b2b.$queryRaw<B2bJobRow[]>`
@@ -278,8 +330,64 @@ async function main() {
       `;
       for (const j of jobs) jobsById.set(j.id, j);
     }
+    console.log(`Loaded ${jobsById.size} jobs`);
 
-    for (const identity of byEmail.values()) {
+    // Upsert job listings once (not per application)
+    if (!dryRun) {
+      console.log('Upserting job listings into candidate-api…');
+      let ji = 0;
+      for (const job of jobsById.values()) {
+        ji += 1;
+        const companyName =
+          job.hiringCompanyName?.trim() ||
+          job.companyName?.trim() ||
+          'Hiring company';
+        await db.jobListing.upsert({
+          where: { b2bJobId: job.id },
+          create: {
+            id: job.id,
+            b2bJobId: job.id,
+            companyName,
+            title: job.title,
+            department: job.department,
+            location: job.location,
+            workMode: job.workMode,
+            type: job.type,
+            salaryMin: job.salaryMin,
+            salaryMax: job.salaryMax,
+            currency: job.currency || 'NGN',
+            description: job.description || '',
+            requirements: job.requirements || [],
+            responsibilities: job.responsibilities || [],
+            status: job.status || 'ACTIVE',
+            closingDate: job.closingDate,
+            syncedAt: new Date(),
+          },
+          update: {
+            companyName,
+            title: job.title,
+            status: job.status || 'ACTIVE',
+            syncedAt: new Date(),
+          },
+        });
+        stats.jobListingsUpserted += 1;
+        if (ji % 25 === 0 || ji === jobsById.size) {
+          console.log(`  jobs ${ji}/${jobsById.size}`);
+        }
+      }
+    }
+
+    const identities = [...byEmail.values()];
+    console.log(`Migrating ${identities.length} candidates…`);
+
+    for (let i = 0; i < identities.length; i++) {
+      const identity = identities[i]!;
+      if ((i + 1) % 10 === 0 || i === 0 || i + 1 === identities.length) {
+        console.log(
+          `  candidates ${i + 1}/${identities.length} (created=${stats.candidatesCreated}, apps=${stats.applicationsCreated})`,
+        );
+      }
+
       let candidate = await db.candidate.findUnique({
         where: { email: identity.email },
       });
@@ -287,7 +395,6 @@ async function main() {
       if (!candidate) {
         if (dryRun) {
           stats.candidatesCreated += 1;
-          console.log(`[dry-run] create SHADOW candidate ${identity.email}`);
         } else {
           candidate = await db.candidate.create({
             data: {
@@ -322,7 +429,6 @@ async function main() {
         }
       }
 
-      // In dry-run without a real id, skip app/backfill detail counts loosely
       const candidateId = candidate?.id;
       if (!candidateId && dryRun) {
         stats.applicationsCreated += identity.applicants.length;
@@ -330,7 +436,6 @@ async function main() {
       }
       if (!candidateId) continue;
 
-      // CV asset from best applicant (once)
       const best = pickBestApplicant(identity.applicants);
       if (best?.cvUrl && !dryRun) {
         const existingCv = await db.cvAsset.findFirst({
@@ -356,41 +461,6 @@ async function main() {
         }
 
         if (!dryRun) {
-          const companyName =
-            job.hiringCompanyName?.trim() ||
-            job.companyName?.trim() ||
-            'Hiring company';
-
-          await db.jobListing.upsert({
-            where: { b2bJobId: job.id },
-            create: {
-              id: job.id,
-              b2bJobId: job.id,
-              companyName,
-              title: job.title,
-              department: job.department,
-              location: job.location,
-              workMode: job.workMode,
-              type: job.type,
-              salaryMin: job.salaryMin,
-              salaryMax: job.salaryMax,
-              currency: job.currency || 'NGN',
-              description: job.description || '',
-              requirements: job.requirements || [],
-              responsibilities: job.responsibilities || [],
-              status: job.status || 'ACTIVE',
-              closingDate: job.closingDate,
-              syncedAt: new Date(),
-            },
-            update: {
-              companyName,
-              title: job.title,
-              status: job.status || 'ACTIVE',
-              syncedAt: new Date(),
-            },
-          });
-          stats.jobListingsUpserted += 1;
-
           const existingApp = await db.application.findFirst({
             where: {
               OR: [
@@ -439,7 +509,6 @@ async function main() {
             );
           }
         } else {
-          stats.jobListingsUpserted += 1;
           stats.applicationsCreated += 1;
           if (!app.externalCandidateId) stats.backfilled += 1;
         }

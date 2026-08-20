@@ -27,7 +27,7 @@ Default port: `4100`. Docs: `http://localhost:4100/docs`.
 | `DATABASE_URL` | Dedicated Postgres |
 | `FRONTEND_URL` | Shared Next app origin (CORS + Better Auth trusted origin) |
 | `BETTER_AUTH_SECRET` | Better Auth secret |
-| `BETTER_AUTH_URL` | Public URL of this API (e.g. `http://localhost:4100` or Railway URL) |
+| `BETTER_AUTH_URL` | **Browser-facing Next origin** (e.g. `https://reerac.ng` or `http://localhost:3000`) — not the Railway API host |
 | `BETTER_AUTH_TRUSTED_ORIGINS` | Extra origins (comma-separated); `FRONTEND_URL` is always trusted |
 | `B2B_API_URL` | B2B API base including `/v1` (apply bridge + internal jobs) |
 | `B2B_SERVICE_TOKEN` | Service token for `/internal/*` |

@@ -24,9 +24,12 @@ export class AuthService implements OnModuleInit {
   onModuleInit() {
     this.auth = betterAuth({
       secret: this.config.betterAuthSecret,
+      // Browser-facing origin (Next app). Auth is proxied at /api/candidate-auth.
       baseURL: this.config.betterAuthUrl,
+      basePath: '/api/candidate-auth',
       trustedOrigins: [
         this.config.frontendUrl,
+        this.config.betterAuthUrl,
         ...this.config.betterAuthTrustedOrigins,
       ],
       database: prismaAdapter(this.prisma, { provider: 'postgresql' }),
@@ -54,7 +57,25 @@ export class AuthService implements OnModuleInit {
 
   forwardBetterAuthResponse(response: Response, res: ExpressResponse) {
     res.status(response.status);
+    const frontendOrigin = this.config.frontendUrl.replace(/\/$/, '');
+    const authPublic = this.config.betterAuthUrl.replace(/\/$/, '');
     response.headers.forEach((value, key) => {
+      if (key.toLowerCase() === 'location') {
+        // Never send the browser to the raw Railway host for auth.
+        let loc = value;
+        loc = loc.replace(
+          /https?:\/\/[^/]+\/api\/auth/gi,
+          `${frontendOrigin}/api/candidate-auth`,
+        );
+        if (authPublic && loc.startsWith(authPublic + '/api/auth')) {
+          loc = loc.replace(
+            authPublic + '/api/auth',
+            `${frontendOrigin}/api/candidate-auth`,
+          );
+        }
+        res.setHeader(key, loc);
+        return;
+      }
       res.setHeader(key, value);
     });
   }

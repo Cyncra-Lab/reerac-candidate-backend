@@ -18,7 +18,7 @@ async function bootstrap() {
 
   const prefix = process.env.API_PREFIX ?? 'v1';
   app.setGlobalPrefix(prefix, {
-    exclude: ['api/auth/(.*)', 'health'],
+    exclude: ['api/auth/(.*)', 'api/candidate-auth/(.*)', 'health'],
   });
 
   const allowedOrigins = (process.env.FRONTEND_URL ?? 'http://localhost:3000')
