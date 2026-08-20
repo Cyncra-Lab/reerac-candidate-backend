@@ -23,18 +23,42 @@ export class AuthController {
     private readonly verification: VerificationService,
   ) {}
 
-  @Get('api/auth/oauth/status')
+  /** Public Google OAuth availability (same-origin via /api/candidate-auth/oauth/status). */
+  @Get(['api/auth/oauth/status', 'api/candidate-auth/oauth/status'])
   oauthStatus() {
     return { google: this.config.isGoogleOAuthConfigured };
   }
 
-  @All('api/auth/*path')
+  /**
+   * Better Auth catch-all.
+   * Next.js rewrites /api/candidate-auth/* → this service /api/auth/* (or /api/candidate-auth/*).
+   * We present the browser-facing URL to Better Auth so it does not 302 to the Railway host
+   * (which turns POST into GET and breaks signup).
+   */
+  @All(['api/auth/*path', 'api/candidate-auth/*path'])
   async handleAuth(@Req() req: Request, @Res() res: Response) {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const publicBase = this.config.betterAuthUrl.replace(/\/$/, '');
+    const rawPath = (req.originalUrl || req.url).split('?')[0] || '';
+    const suffix = rawPath
+      .replace(/^\/api\/candidate-auth/, '')
+      .replace(/^\/api\/auth/, '');
+    const publicPath = `/api/candidate-auth${suffix.startsWith('/') ? suffix : `/${suffix}`}`;
+    const url = new URL(
+      publicPath + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''),
+      publicBase.endsWith('/') ? publicBase : `${publicBase}/`,
+    );
+
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {
       if (value) headers.set(key, Array.isArray(value) ? value.join(',') : value);
     }
+    // Prefer public host for Better Auth cookie / redirect logic
+    try {
+      headers.set('host', new URL(publicBase).host);
+    } catch {
+      /* ignore */
+    }
+
     const request = new Request(url.toString(), {
       method: req.method,
       headers,
