@@ -69,8 +69,8 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Upsert talent identity for a platform (B2B) or legacy local auth user.
-   * `id` is the Better Auth user id from the shared login platform.
+   * Upsert talent identity for a local Better Auth user.
+   * `id` is the candidate-api Better Auth user id.
    */
   async ensureCandidate(authUser: {
     id: string;

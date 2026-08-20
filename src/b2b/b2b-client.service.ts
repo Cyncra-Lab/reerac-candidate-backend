@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import { AppConfigService } from '../config/config.service.js';
 
@@ -23,7 +23,6 @@ export type B2bPublicJob = {
 
 @Injectable()
 export class B2bClientService {
-  private readonly logger = new Logger(B2bClientService.name);
   private readonly http: AxiosInstance;
 
   constructor(private readonly config: AppConfigService) {
@@ -64,45 +63,5 @@ export class B2bClientService {
   }) {
     const { data } = await this.http.post('/internal/applications', payload);
     return data?.data ?? data;
-  }
-
-  /** Resolve a platform (B2B) user from their Bearer session token. */
-  async resolveBearerUser(accessToken: string): Promise<{
-    id: string;
-    authUserId: string;
-    email: string;
-    firstName: string;
-    lastName: string;
-    name: string;
-    role?: string;
-  } | null> {
-    try {
-      const { data } = await axios.get(`${this.config.b2bApiUrl}/auth/me`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        timeout: 15_000,
-      });
-      const user = data?.data ?? data;
-      if (!user?.email) return null;
-      const authUserId = String(user.id);
-      const firstName =
-        user.firstName ?? ((user.name || '').split(/\s+/)[0] || 'Candidate');
-      const lastName =
-        user.lastName ??
-        ((user.name || '').split(/\s+/).slice(1).join(' ') || '');
-      return {
-        id: user.userId ?? user.id,
-        authUserId,
-        email: String(user.email).toLowerCase(),
-        firstName,
-        lastName,
-        name: `${firstName} ${lastName}`.trim() || user.name || user.email,
-        role: user.role,
-      };
-    } catch (err) {
-      this.logger.debug(
-        `B2B bearer resolve failed: ${(err as Error).message}`,
-      );
-      return null;
-    }
   }
 }
