@@ -79,6 +79,13 @@ export class AppConfigService {
     return this.config.get<string>('RESEND_API_KEY', '')!;
   }
 
+  get resendFromEmail(): string {
+    return (
+      this.config.get<string>('RESEND_FROM_EMAIL') ??
+      'Reerac AI <no-reply@notifications.reerac.ng>'
+    );
+  }
+
   get lifecycleCronSecret(): string {
     return this.config.get<string>('LIFECYCLE_CRON_SECRET', '')!;
   }

@@ -1,4 +1,9 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { randomInt, randomUUID } from 'crypto';
 import { Resend } from 'resend';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -40,20 +45,32 @@ export class VerificationService {
     const subject = 'Verify your email — Reerac AI';
     const text = `Your verification code is: ${code}\n\nThis code expires in ${OTP_EXPIRY_MINUTES} minutes.\n\nIf you didn't request this, please ignore this email.\n\n— Reerac AI`;
 
-    if (this.resend) {
-      await this.resend.emails.send({
-        from: 'Reerac <noreply@reerac.com>',
-        to: normalized,
-        subject,
-        text,
-      });
-    } else {
-      this.logger.warn(
-        `OTP for ${normalized} (Resend not configured): ${code}`,
+    if (!this.resend) {
+      this.logger.error(
+        `RESEND_API_KEY missing — OTP for ${normalized} not emailed (code=${code})`,
+      );
+      throw new ServiceUnavailableException(
+        'Email delivery is not configured. Please try again later.',
       );
     }
 
-    this.logger.log(`OTP sent to ${normalized}`);
+    const { data, error } = await this.resend.emails.send({
+      from: this.config.resendFromEmail,
+      to: normalized,
+      subject,
+      text,
+    });
+
+    if (error) {
+      this.logger.error(
+        `Resend OTP failed for ${normalized}: ${error.message}`,
+      );
+      throw new ServiceUnavailableException(
+        'Could not send verification email. Please try again shortly.',
+      );
+    }
+
+    this.logger.log(`OTP emailed to ${normalized} (id=${data?.id ?? 'n/a'})`);
     return { message: 'Verification code sent to your email' };
   }
 
