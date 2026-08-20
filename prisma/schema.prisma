@@ -76,10 +76,22 @@ model auth_verification {
 
 // ─── Candidate talent identity ───
 
+enum CandidateAccountStatus {
+  /// Imported from B2B / apply history — no Better Auth user yet.
+  SHADOW
+  /// Signed up; authUserId is set.
+  ACTIVE
+}
+
+enum CandidateSource {
+  SIGNUP
+  MIGRATION_B2B
+}
+
 model Candidate {
   id           String   @id @default(cuid())
-  /// Platform auth user id (B2B Better Auth). Not a local FK — one shared login.
-  authUserId   String   @unique
+  /// Local Better Auth user id. Null for SHADOW (pre-signup) rows.
+  authUserId   String?  @unique
   email        String
   firstName    String
   lastName     String
@@ -88,6 +100,9 @@ model Candidate {
   location     String?
   roleInterest String?
   experienceLevel String?
+  accountStatus CandidateAccountStatus @default(ACTIVE)
+  source        CandidateSource        @default(SIGNUP)
+  migratedAt    DateTime?
   /// Marketing / lifecycle email opt-in (in-app notifications still delivered).
   lifecycleEmailOptIn Boolean @default(true)
   /// Set when PROFILE_VERIFICATION is purchased.
@@ -109,7 +124,8 @@ model Candidate {
   whatsAppOptIn  WhatsAppOptIn?
   entitlements   Entitlement[]
 
-  @@index([email])
+  @@unique([email])
+  @@index([accountStatus])
   @@map("candidates")
 }
 
