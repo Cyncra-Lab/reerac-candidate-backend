@@ -54,7 +54,7 @@ export class ApplicationsService {
       portfolioUrl?: string;
       coverLetter?: string;
       cvUrl: string;
-      cvFileName: string;
+      cvFileName?: string;
     },
   ) {
     let candidate = await this.prisma.candidate.findUnique({
