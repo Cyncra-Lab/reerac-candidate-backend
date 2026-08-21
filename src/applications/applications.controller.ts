@@ -34,8 +34,9 @@ class ApplyDto {
   @IsString()
   cvUrl!: string;
 
+  @IsOptional()
   @IsString()
-  cvFileName!: string;
+  cvFileName?: string;
 }
 
 @Controller('applications')

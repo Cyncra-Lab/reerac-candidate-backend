@@ -66,6 +66,11 @@ export class ApplicationsService {
       throw new BadRequestException('CV upload is required');
     }
 
+    const cvFileName =
+      dto.cvFileName?.trim() ||
+      dto.cvUrl.split('/').pop()?.split('?')[0] ||
+      'cv.pdf';
+
     // Keep profile in sync with the apply form (name/phone may have been edited).
     if (dto.name?.trim() || dto.phone?.trim()) {
       const parts = (dto.name ?? '').trim().split(/\s+/).filter(Boolean);
@@ -89,9 +94,11 @@ export class ApplicationsService {
           jobListingId: listing.id,
         },
       },
+      include: { jobListing: true },
     });
     if (existing) {
-      throw new BadRequestException('You already applied to this job');
+      // Idempotent: treat re-submit after a successful apply as success.
+      return existing;
     }
 
     let b2bApplicant: { id: string };
@@ -105,7 +112,7 @@ export class ApplicationsService {
         portfolioUrl: dto.portfolioUrl,
         coverLetter: dto.coverLetter,
         cvUrl: dto.cvUrl,
-        cvFileName: dto.cvFileName,
+        cvFileName,
       });
     } catch (err) {
       const axiosErr = err as {
