@@ -16,7 +16,20 @@ export class DashboardService {
     ] = await Promise.all([
       this.prisma.candidate.findUnique({
         where: { id: candidateId },
-        select: { verifiedAt: true, visibilityBoostUntil: true },
+        select: {
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          location: true,
+          roleInterest: true,
+          experienceLevel: true,
+          linkedInUrl: true,
+          verifiedAt: true,
+          visibilityBoostUntil: true,
+          profile: { select: { summary: true, skills: true } },
+          cvAssets: { select: { id: true }, take: 1 },
+        },
       }),
       this.prisma.application.findMany({
         where: { candidateId },
@@ -71,7 +84,35 @@ export class DashboardService {
       candidate?.visibilityBoostUntil && candidate.visibilityBoostUntil > now,
     );
 
+    const profileChecks = [
+      Boolean(candidate?.firstName && candidate?.lastName),
+      Boolean(candidate?.phone),
+      Boolean(candidate?.location),
+      Boolean(candidate?.roleInterest),
+      Boolean(candidate?.experienceLevel),
+      Boolean(candidate?.profile?.summary),
+      Boolean((candidate?.profile?.skills?.length ?? 0) > 0),
+      Boolean(candidate?.cvAssets?.length),
+      Boolean(candidate?.linkedInUrl),
+    ];
+    const profileCompleted = profileChecks.filter(Boolean).length;
+    const profileTotal = profileChecks.length;
+
     return {
+      candidate: {
+        firstName: candidate?.firstName ?? null,
+        lastName: candidate?.lastName ?? null,
+        email: candidate?.email ?? null,
+        roleInterest: candidate?.roleInterest ?? null,
+        hasCv: Boolean(candidate?.cvAssets?.length),
+        hasPhone: Boolean(candidate?.phone),
+        hasRoleInterest: Boolean(candidate?.roleInterest),
+      },
+      profileCompletion: {
+        completed: profileCompleted,
+        total: profileTotal,
+        percent: Math.round((profileCompleted / profileTotal) * 100),
+      },
       totals: {
         applications: applications.length,
         activeApplications: applications.filter(

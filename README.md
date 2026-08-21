@@ -36,6 +36,39 @@ Default port: `4100`. Docs: `http://localhost:4100/docs`.
 | `RESEND_FROM_EMAIL` | Verified sender, e.g. `Reerac AI <no-reply@notifications.reerac.ng>` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional Google OAuth |
 
+### Google OAuth (candidate)
+
+Candidate Better Auth uses **basePath** `/api/candidate-auth` (proxied by Next). In [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → your OAuth **Web client**, add these **Authorized redirect URIs** (exact match):
+
+```text
+https://www.reerac.ng/api/candidate-auth/callback/google
+http://localhost:3000/api/candidate-auth/callback/google
+```
+
+Also keep the recruiter (B2B) URI if you share the same client:
+
+```text
+https://www.reerac.ng/api/auth/callback/google
+http://localhost:3000/api/auth/callback/google
+```
+
+**Authorized JavaScript origins:**
+
+```text
+https://www.reerac.ng
+https://reerac.ng
+http://localhost:3000
+```
+
+On Railway **candidate-api**, set:
+
+```env
+FRONTEND_URL=https://www.reerac.ng
+BETTER_AUTH_URL=https://www.reerac.ng
+```
+
+`BETTER_AUTH_URL` must be the **browser Next origin** (not the Railway API host). A wrong value produces Google `Error 400: redirect_uri_mismatch`.
+
 ## Frontend (reerac-ai)
 
 Candidate UI lives in [`reerac-ai`](../reerac-ai) under `/candidate/*` and shared `/login?account=candidate` / `/signup?account=candidate`.
