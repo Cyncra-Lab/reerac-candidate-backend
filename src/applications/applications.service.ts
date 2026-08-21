@@ -136,6 +136,25 @@ export class ApplicationsService {
     return application;
   }
 
+  /**
+   * B2B already created the hiring record. Persist a dashboard copy only.
+   */
+  async recordCopyFromB2b(
+    candidateId: string,
+    dto: { jobId: string; b2bApplicantId: string; status?: string },
+  ) {
+    if (!dto.b2bApplicantId?.trim()) {
+      throw new BadRequestException('b2bApplicantId is required');
+    }
+    const listing = await this.jobs.getById(dto.jobId);
+    return this.upsertCandidateCopy({
+      candidateId,
+      jobListingId: listing.id,
+      b2bApplicantId: dto.b2bApplicantId.trim(),
+      status: mapB2bStatusToCandidate(dto.status),
+    });
+  }
+
   private async createOnB2b(payload: {
     jobId: string;
     externalCandidateId: string;
@@ -318,6 +337,7 @@ export class ApplicationsService {
     cvScanStatus?: string;
     externalCandidateId?: string;
     jobId?: string;
+    email?: string;
   }) {
     const seen = await this.prisma.processedEvent.findUnique({
       where: { eventId: params.eventId },
@@ -328,16 +348,25 @@ export class ApplicationsService {
       where: { b2bApplicantId: params.b2bApplicantId },
     });
 
+    let candidateId = params.externalCandidateId;
+    if (!candidateId && params.email) {
+      const byEmail = await this.prisma.candidate.findUnique({
+        where: { email: params.email.trim().toLowerCase() },
+        select: { id: true },
+      });
+      candidateId = byEmail?.id;
+    }
+
     if (
       !application &&
-      params.externalCandidateId &&
+      candidateId &&
       params.b2bApplicantId &&
       params.jobId
     ) {
       try {
         const listing = await this.jobs.getById(params.jobId);
         application = await this.upsertCandidateCopy({
-          candidateId: params.externalCandidateId,
+          candidateId,
           jobListingId: listing.id,
           b2bApplicantId: params.b2bApplicantId,
           status: mapB2bStatusToCandidate(params.status, params.cvScanStatus),

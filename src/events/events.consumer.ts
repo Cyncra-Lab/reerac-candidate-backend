@@ -108,6 +108,7 @@ export class EventsConsumerService implements OnModuleInit, OnModuleDestroy {
         cvScanStatus: payload.cvScanStatus,
         externalCandidateId: payload.externalCandidateId,
         jobId: payload.jobId,
+        email: payload.email,
       });
     }
 
