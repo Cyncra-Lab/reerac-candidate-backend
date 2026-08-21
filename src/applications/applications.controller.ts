@@ -51,6 +51,15 @@ export class ApplicationsController {
 
   @Post()
   apply(@Req() req: any, @Body() dto: ApplyDto) {
-    return this.applications.apply(req.candidate.id, dto);
+    const cvUrl = dto.cvUrl?.trim() ?? '';
+    const cvFileName =
+      dto.cvFileName?.trim() ||
+      cvUrl.split('/').pop()?.split('?')[0] ||
+      'cv.pdf';
+    return this.applications.apply(req.candidate.id, {
+      ...dto,
+      cvUrl,
+      cvFileName,
+    });
   }
 }

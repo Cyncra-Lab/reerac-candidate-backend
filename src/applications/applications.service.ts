@@ -116,15 +116,22 @@ export class ApplicationsService {
       });
     } catch (err) {
       const axiosErr = err as {
-        response?: { status?: number; data?: { message?: string; error?: { message?: string } } };
+        response?: {
+          status?: number;
+          data?: {
+            message?: string | string[];
+            error?: { message?: string | string[] };
+          };
+        };
         message?: string;
       };
       const status = axiosErr.response?.status;
-      const message =
+      const raw =
         axiosErr.response?.data?.error?.message ||
         axiosErr.response?.data?.message ||
         axiosErr.message ||
         'Failed to submit application to hiring workspace';
+      const message = Array.isArray(raw) ? raw.join(', ') : String(raw);
       if (status === 400) throw new BadRequestException(message);
       if (status === 404) throw new NotFoundException(message);
       this.logger.error(`B2B createApplication failed: ${message}`);
