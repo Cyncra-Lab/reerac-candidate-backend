@@ -12,7 +12,7 @@ import { AppConfigService } from '../config/config.service.js';
 import axios from 'axios';
 
 export function mapB2bStatusToCandidate(
-  status: string,
+  status?: string,
   cvScanStatus?: string,
 ): CandidateApplicationStatus {
   if (cvScanStatus === 'SCANNING') return 'SCREENING';
