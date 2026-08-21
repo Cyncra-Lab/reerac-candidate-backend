@@ -60,7 +60,11 @@ export class B2bClientService {
     coverLetter?: string;
     cvUrl: string;
     cvFileName: string;
-  }) {
+  }): Promise<{
+    id: string;
+    status?: string;
+    cvScanStatus?: string;
+  }> {
     const { data } = await this.http.post('/internal/applications', payload);
     return data?.data ?? data;
   }

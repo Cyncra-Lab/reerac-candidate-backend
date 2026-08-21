@@ -45,6 +45,11 @@ export class ApplicationsService {
     private readonly config: AppConfigService,
   ) {}
 
+  /**
+   * Candidate-api authenticates the talent and forwards apply to B2B.
+   * B2B is the hiring record (recruiter pipeline). This service only stores a
+   * tracking copy after B2B returns an applicant id.
+   */
   async apply(
     candidateId: string,
     dto: {
@@ -66,12 +71,12 @@ export class ApplicationsService {
       throw new BadRequestException('CV upload is required');
     }
 
+    const cvUrl = dto.cvUrl.trim();
     const cvFileName =
       dto.cvFileName?.trim() ||
-      dto.cvUrl.split('/').pop()?.split('?')[0] ||
+      cvUrl.split('/').pop()?.split('?')[0] ||
       'cv.pdf';
 
-    // Keep profile in sync with the apply form (name/phone may have been edited).
     if (dto.name?.trim() || dto.phone?.trim()) {
       const parts = (dto.name ?? '').trim().split(/\s+/).filter(Boolean);
       const firstName = parts[0] || candidate.firstName;
@@ -87,34 +92,77 @@ export class ApplicationsService {
     }
 
     const listing = await this.jobs.getById(dto.jobId);
-    const existing = await this.prisma.application.findUnique({
+
+    const priorCopy = await this.prisma.application.findUnique({
       where: {
         candidateId_jobListingId: {
           candidateId,
           jobListingId: listing.id,
         },
       },
-      include: { jobListing: true },
     });
-    if (existing) {
-      // Idempotent: treat re-submit after a successful apply as success.
-      return existing;
+
+    const b2bApplicant = await this.createOnB2b({
+      jobId: listing.b2bJobId,
+      externalCandidateId: candidate.id,
+      name: `${candidate.firstName} ${candidate.lastName}`.trim(),
+      email: candidate.email,
+      phone: dto.phone ?? candidate.phone ?? undefined,
+      portfolioUrl: dto.portfolioUrl,
+      coverLetter: dto.coverLetter,
+      cvUrl,
+      cvFileName,
+    });
+
+    const application = await this.upsertCandidateCopy({
+      candidateId,
+      jobListingId: listing.id,
+      b2bApplicantId: b2bApplicant.id,
+      status: mapB2bStatusToCandidate(
+        b2bApplicant.status,
+        b2bApplicant.cvScanStatus,
+      ),
+    });
+
+    if (!priorCopy) {
+      await this.afterFirstApply({
+        candidateId,
+        phone: dto.phone ?? candidate.phone,
+        firstName: candidate.firstName,
+        jobTitle: listing.title,
+      });
     }
 
-    let b2bApplicant: { id: string };
+    return application;
+  }
+
+  private async createOnB2b(payload: {
+    jobId: string;
+    externalCandidateId: string;
+    name: string;
+    email: string;
+    phone?: string;
+    portfolioUrl?: string;
+    coverLetter?: string;
+    cvUrl: string;
+    cvFileName: string;
+  }): Promise<{
+    id: string;
+    status?: string;
+    cvScanStatus?: string;
+  }> {
     try {
-      b2bApplicant = await this.b2b.createApplication({
-        jobId: listing.b2bJobId,
-        externalCandidateId: candidate.id,
-        name: `${candidate.firstName} ${candidate.lastName}`.trim(),
-        email: candidate.email,
-        phone: dto.phone ?? candidate.phone ?? undefined,
-        portfolioUrl: dto.portfolioUrl,
-        coverLetter: dto.coverLetter,
-        cvUrl: dto.cvUrl,
-        cvFileName,
-      });
+      const b2bApplicant = await this.b2b.createApplication(payload);
+      if (!b2bApplicant?.id) {
+        throw new BadRequestException(
+          'Hiring workspace did not return an application id',
+        );
+      }
+      return b2bApplicant;
     } catch (err) {
+      if (err instanceof BadRequestException || err instanceof NotFoundException) {
+        throw err;
+      }
       const axiosErr = err as {
         response?: {
           status?: number;
@@ -132,58 +180,106 @@ export class ApplicationsService {
         axiosErr.message ||
         'Failed to submit application to hiring workspace';
       const message = Array.isArray(raw) ? raw.join(', ') : String(raw);
-      if (status === 400) throw new BadRequestException(message);
       if (status === 404) throw new NotFoundException(message);
       this.logger.error(`B2B createApplication failed: ${message}`);
       throw new BadRequestException(message);
     }
+  }
 
-    if (!b2bApplicant?.id) {
-      throw new BadRequestException(
-        'Hiring workspace did not return an application id',
-      );
-    }
-
-    const application = await this.prisma.application.create({
-      data: {
-        candidateId,
-        jobListingId: listing.id,
-        b2bApplicantId: b2bApplicant.id,
-        status: 'APPLIED',
-      },
+  /** Projection for the candidate dashboard. Never the hiring source of truth. */
+  private async upsertCandidateCopy(params: {
+    candidateId: string;
+    jobListingId: string;
+    b2bApplicantId: string;
+    status: CandidateApplicationStatus;
+  }) {
+    const byApplicant = await this.prisma.application.findUnique({
+      where: { b2bApplicantId: params.b2bApplicantId },
       include: { jobListing: true },
     });
+    if (byApplicant) {
+      return this.prisma.application.update({
+        where: { id: byApplicant.id },
+        data: {
+          status: params.status,
+          lastSyncedAt: new Date(),
+        },
+        include: { jobListing: true },
+      });
+    }
 
-    if (dto.phone || candidate.phone) {
-      const phone = (dto.phone ?? candidate.phone)!.trim();
+    try {
+      return await this.prisma.application.upsert({
+        where: {
+          candidateId_jobListingId: {
+            candidateId: params.candidateId,
+            jobListingId: params.jobListingId,
+          },
+        },
+        create: {
+          candidateId: params.candidateId,
+          jobListingId: params.jobListingId,
+          b2bApplicantId: params.b2bApplicantId,
+          status: params.status,
+        },
+        update: {
+          b2bApplicantId: params.b2bApplicantId,
+          status: params.status,
+          lastSyncedAt: new Date(),
+        },
+        include: { jobListing: true },
+      });
+    } catch (err) {
+      this.logger.error(
+        `B2B apply succeeded (${params.b2bApplicantId}) but candidate copy failed: ${(err as Error).message}`,
+      );
+      throw new BadRequestException(
+        'Application was received by the hiring team, but your dashboard copy could not be saved. Refresh and check Applications.',
+      );
+    }
+  }
+
+  private async afterFirstApply(params: {
+    candidateId: string;
+    phone?: string | null;
+    firstName: string;
+    jobTitle: string;
+  }) {
+    if (params.phone?.trim()) {
+      const phone = params.phone.trim();
       await this.prisma.whatsAppOptIn.upsert({
-        where: { candidateId },
-        create: { candidateId, phone, optedIn: true, community: true },
+        where: { candidateId: params.candidateId },
+        create: {
+          candidateId: params.candidateId,
+          phone,
+          optedIn: true,
+          community: true,
+        },
         update: { phone, optedIn: true, community: true },
       });
       void this.handoffWhatsApp({
-        candidateId,
+        candidateId: params.candidateId,
         phone,
-        name: candidate.firstName,
-        jobTitle: listing.title,
+        name: params.firstName,
+        jobTitle: params.jobTitle,
       });
     }
 
-    await this.prisma.notification.create({
-      data: {
-        candidateId,
-        type: 'WHATSAPP_COMMUNITY',
-        title: 'Join the Reerac WhatsApp community',
-        body: `You applied to ${listing.title}. Message us on WhatsApp to join the free talent community for job updates.`,
-        link: '/jobs',
-      },
-    }).catch((err) => {
-      this.logger.warn(
-        `Failed to create WhatsApp community notification: ${(err as Error).message}`,
-      );
-    });
-
-    return application;
+    await this.prisma.notification
+      .create({
+        data: {
+          candidateId: params.candidateId,
+          type: 'WHATSAPP_COMMUNITY',
+          title: 'Join the Reerac WhatsApp community',
+          body: `You applied to ${params.jobTitle}. Message us on WhatsApp to join the free talent community for job updates.`,
+          link: '/jobs',
+        },
+      })
+      .catch((err) => {
+        this.logger.warn(
+          `Failed to create WhatsApp community notification: ${(err as Error).message}`,
+        );
+      });
   }
 
   private async handoffWhatsApp(payload: {
@@ -221,25 +317,38 @@ export class ApplicationsService {
     status: string;
     cvScanStatus?: string;
     externalCandidateId?: string;
+    jobId?: string;
   }) {
     const seen = await this.prisma.processedEvent.findUnique({
       where: { eventId: params.eventId },
     });
     if (seen) return { skipped: true };
 
-    const application = await this.prisma.application.findFirst({
-      where: {
-        OR: [
-          { b2bApplicantId: params.b2bApplicantId },
-          ...(params.externalCandidateId
-            ? [{ candidateId: params.externalCandidateId }]
-            : []),
-        ],
-      },
+    let application = await this.prisma.application.findUnique({
+      where: { b2bApplicantId: params.b2bApplicantId },
     });
 
-    if (application) {
-      await this.prisma.application.update({
+    if (
+      !application &&
+      params.externalCandidateId &&
+      params.b2bApplicantId &&
+      params.jobId
+    ) {
+      try {
+        const listing = await this.jobs.getById(params.jobId);
+        application = await this.upsertCandidateCopy({
+          candidateId: params.externalCandidateId,
+          jobListingId: listing.id,
+          b2bApplicantId: params.b2bApplicantId,
+          status: mapB2bStatusToCandidate(params.status, params.cvScanStatus),
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Could not create candidate copy from B2B event: ${(err as Error).message}`,
+        );
+      }
+    } else if (application) {
+      application = await this.prisma.application.update({
         where: { id: application.id },
         data: {
           status: mapB2bStatusToCandidate(params.status, params.cvScanStatus),
