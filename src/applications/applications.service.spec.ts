@@ -128,13 +128,27 @@ describe('ApplicationsService.apply', () => {
     expect(result.id).toBe('app-1');
   });
 
-  it('rejects duplicate applications', async () => {
-    prisma.application.findUnique.mockResolvedValue({ id: 'existing' });
+  it('returns existing application instead of rejecting duplicates', async () => {
+    prisma.application.findUnique.mockResolvedValue({
+      id: 'existing',
+      status: 'APPLIED',
+      jobListing: { id: 'listing-1', title: 'Engineer' },
+    });
 
-    await expect(service.apply('cand-1', dto)).rejects.toThrow(
-      BadRequestException,
-    );
+    const result = await service.apply('cand-1', dto);
+    expect(result.id).toBe('existing');
     expect(b2b.createApplication).not.toHaveBeenCalled();
+  });
+
+  it('defaults cvFileName from cvUrl when omitted', async () => {
+    const { cvFileName: _omit, ...withoutName } = dto;
+    await service.apply('cand-1', withoutName as typeof dto);
+
+    expect(b2b.createApplication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cvFileName: '1710000000000-resume.pdf',
+      }),
+    );
   });
 
   it('surfaces B2B 400 errors as BadRequestException', async () => {
