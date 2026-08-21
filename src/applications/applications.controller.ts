@@ -56,6 +56,7 @@ export class ApplicationsController {
       dto.cvFileName?.trim() ||
       cvUrl.split('/').pop()?.split('?')[0] ||
       'cv.pdf';
+    // Auth stays on B2C. The hiring write is forwarded to B2B inside apply().
     return this.applications.apply(req.candidate.id, {
       ...dto,
       cvUrl,

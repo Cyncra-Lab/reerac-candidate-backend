@@ -103,8 +103,8 @@ Next.js rewrites (same-origin cookies):
 ## Integration with B2B
 
 - Jobs: `B2B_API_URL` + `B2B_SERVICE_TOKEN` → `/internal/jobs`
-- Applications: → `/internal/applications`
-- Events: Redis stream `reerac:b2b:events` (optional)
+- Applications: candidate-api authenticates, then **B2B creates the hiring record** via `/internal/applications`. B2C stores a tracking copy only after B2B returns an applicant id.
+- Events: Redis stream `reerac:b2b:events` (optional; also used to backfill the candidate copy)
 
 ## Shadow candidates and B2B migration
 

@@ -22,7 +22,11 @@ describe('ApplicationsService.apply', () => {
   let service: ApplicationsService;
   let prisma: {
     candidate: { findUnique: jest.Mock; update: jest.Mock };
-    application: { findUnique: jest.Mock; create: jest.Mock };
+    application: {
+      findUnique: jest.Mock;
+      upsert: jest.Mock;
+      update: jest.Mock;
+    };
     whatsAppOptIn: { upsert: jest.Mock };
     notification: { create: jest.Mock };
   };
@@ -36,6 +40,12 @@ describe('ApplicationsService.apply', () => {
     phone: '+2348000000000',
     cvUrl: 'cvs/job-b2b-1/1710000000000-resume.pdf',
     cvFileName: 'resume.pdf',
+  };
+
+  const localCopy = {
+    id: 'app-1',
+    status: 'APPLIED',
+    jobListing: { id: 'listing-1', title: 'Engineer' },
   };
 
   beforeEach(() => {
@@ -58,17 +68,17 @@ describe('ApplicationsService.apply', () => {
       },
       application: {
         findUnique: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({
-          id: 'app-1',
-          status: 'APPLIED',
-          jobListing: { id: 'listing-1', title: 'Engineer' },
-        }),
+        upsert: jest.fn().mockResolvedValue(localCopy),
+        update: jest.fn().mockResolvedValue(localCopy),
       },
       whatsAppOptIn: { upsert: jest.fn().mockResolvedValue({}) },
       notification: { create: jest.fn().mockResolvedValue({}) },
     };
     b2b = {
-      createApplication: jest.fn().mockResolvedValue({ id: 'b2b-app-1' }),
+      createApplication: jest.fn().mockResolvedValue({
+        id: 'b2b-app-1',
+        status: 'NEW',
+      }),
     };
     jobs = {
       getById: jest.fn().mockResolvedValue({
@@ -94,7 +104,7 @@ describe('ApplicationsService.apply', () => {
     expect(b2b.createApplication).not.toHaveBeenCalled();
   });
 
-  it('updates candidate name from apply form and creates B2B + local application', async () => {
+  it('writes to B2B first then upserts the candidate copy', async () => {
     const result = await service.apply('cand-1', dto);
 
     expect(prisma.candidate.update).toHaveBeenCalledWith(
@@ -117,27 +127,32 @@ describe('ApplicationsService.apply', () => {
         cvFileName: 'resume.pdf',
       }),
     );
-    expect(prisma.application.create).toHaveBeenCalledWith(
+    expect(prisma.application.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
+        create: expect.objectContaining({
           b2bApplicantId: 'b2b-app-1',
-          status: 'APPLIED',
+          status: 'IN_REVIEW',
         }),
       }),
     );
     expect(result.id).toBe('app-1');
   });
 
-  it('returns existing application instead of rejecting duplicates', async () => {
-    prisma.application.findUnique.mockResolvedValue({
-      id: 'existing',
-      status: 'APPLIED',
-      jobListing: { id: 'listing-1', title: 'Engineer' },
-    });
+  it('still calls B2B when a local copy already exists', async () => {
+    prisma.application.findUnique.mockImplementation(
+      (args: { where?: { candidateId_jobListingId?: unknown; b2bApplicantId?: string } }) => {
+        if (args?.where?.candidateId_jobListingId) {
+          return Promise.resolve({ id: 'existing' });
+        }
+        return Promise.resolve(null);
+      },
+    );
 
-    const result = await service.apply('cand-1', dto);
-    expect(result.id).toBe('existing');
-    expect(b2b.createApplication).not.toHaveBeenCalled();
+    await service.apply('cand-1', dto);
+
+    expect(b2b.createApplication).toHaveBeenCalled();
+    expect(prisma.application.upsert).toHaveBeenCalled();
+    expect(prisma.notification.create).not.toHaveBeenCalled();
   });
 
   it('defaults cvFileName from cvUrl when omitted', async () => {
@@ -151,17 +166,20 @@ describe('ApplicationsService.apply', () => {
     );
   });
 
-  it('surfaces B2B 400 errors as BadRequestException', async () => {
+  it('does not write a candidate copy if B2B rejects', async () => {
     b2b.createApplication.mockRejectedValue({
       response: {
         status: 400,
-        data: { error: { message: 'An applicant with this email already exists for this job.' } },
+        data: {
+          error: {
+            message: 'An applicant with this email already exists for this job.',
+          },
+        },
       },
     });
 
-    await expect(service.apply('cand-1', dto)).rejects.toThrow(
-      /already exists/i,
-    );
+    await expect(service.apply('cand-1', dto)).rejects.toThrow(/already exists/i);
+    expect(prisma.application.upsert).not.toHaveBeenCalled();
   });
 
   it('throws when candidate is missing', async () => {
@@ -170,5 +188,6 @@ describe('ApplicationsService.apply', () => {
     await expect(service.apply('missing', dto)).rejects.toThrow(
       NotFoundException,
     );
+    expect(b2b.createApplication).not.toHaveBeenCalled();
   });
 });
