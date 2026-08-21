@@ -26,7 +26,12 @@ export class AuthController {
   /** Public Google OAuth availability (same-origin via /api/candidate-auth/oauth/status). */
   @Get(['api/auth/oauth/status', 'api/candidate-auth/oauth/status'])
   oauthStatus() {
-    return { google: this.config.isGoogleOAuthConfigured };
+    const base = this.config.betterAuthUrl.replace(/\/$/, '');
+    return {
+      google: this.config.isGoogleOAuthConfigured,
+      /** Must be listed in Google Cloud OAuth client Authorized redirect URIs. */
+      redirectUri: `${base}/api/candidate-auth/callback/google`,
+    };
   }
 
   /**
