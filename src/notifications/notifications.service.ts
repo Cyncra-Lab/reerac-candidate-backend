@@ -133,6 +133,57 @@ export class NotificationsService {
     return { sent };
   }
 
+  async runMatchDigests() {
+    const week = 7 * 24 * 60 * 60 * 1000;
+    const day = 24 * 60 * 60 * 1000;
+    let sent = 0;
+    const candidates = await this.prisma.candidate.findMany({
+      where: { accountStatus: 'ACTIVE' },
+      include: {
+        entitlements: true,
+        matchScores: {
+          include: { jobListing: true },
+          orderBy: { matchPercent: 'desc' },
+          take: 5,
+        },
+      },
+      take: 300,
+    });
+
+    for (const c of candidates) {
+      if (!c.matchScores.length) continue;
+      const premium = c.entitlements.some(
+        (e) =>
+          (e.sku === 'PREMIUM_WHATSAPP' || e.sku === 'ALL_ACCESS') &&
+          e.remaining > 0,
+      );
+      const campaign = premium ? 'MATCH_DIGEST_DAILY' : 'MATCH_DIGEST_WEEKLY';
+      const window = premium ? day : week;
+      if (await this.recentlySent(c.id, campaign, window)) continue;
+      if (!c.lifecycleEmailOptIn && !premium) continue;
+
+      const lines = c.matchScores
+        .map(
+          (m) =>
+            `• ${m.jobListing.title} at ${m.jobListing.companyName} — ${m.matchPercent}% match`,
+        )
+        .join('\n');
+      await this.dispatch(c.id, c.email, c.firstName, {
+        campaign,
+        title: premium ? 'Your daily job matches' : 'Your weekly job matches',
+        body: `Hi ${c.firstName}, here are roles that fit your profile:\n${lines}\n\nOpen Reerac to apply.`,
+      });
+      sent++;
+    }
+    return { sent };
+  }
+
+  unreadCount(candidateId: string) {
+    return this.prisma.notification.count({
+      where: { candidateId, readAt: null },
+    });
+  }
+
   private async dispatch(
     candidateId: string,
     email: string,
@@ -145,7 +196,7 @@ export class NotificationsService {
         type: payload.campaign,
         title: payload.title,
         body: payload.body,
-        link: '/dashboard',
+        link: '/candidate/applications',
       },
     });
     await this.prisma.notificationCampaignLog.create({

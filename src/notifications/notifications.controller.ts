@@ -26,6 +26,13 @@ export class NotificationsController {
     return this.notifications.list(req.candidate.id);
   }
 
+  @Get('unread-count')
+  @UseGuards(CandidateAuthGuard)
+  async unread(@Req() req: any) {
+    const count = await this.notifications.unreadCount(req.candidate.id);
+    return { count };
+  }
+
   @Patch(':id/read')
   @UseGuards(CandidateAuthGuard)
   markRead(@Req() req: any, @Param('id') id: string) {
@@ -46,11 +53,22 @@ export class NotificationsController {
 
   /** Ops/cron trigger for lifecycle campaigns. Requires LIFECYCLE_CRON_SECRET. */
   @Post('lifecycle/run')
-  runLifecycle(@Headers('x-cron-secret') secret?: string) {
+  async runLifecycle(@Headers('x-cron-secret') secret?: string) {
     const expected = this.config.lifecycleCronSecret;
     if (!expected || secret !== expected) {
       throw new UnauthorizedException('Invalid cron secret');
     }
-    return this.notifications.runLifecycleCampaigns();
+    const lifecycle = await this.notifications.runLifecycleCampaigns();
+    const digests = await this.notifications.runMatchDigests();
+    return { lifecycle, digests };
+  }
+
+  @Post('digests/run')
+  runDigests(@Headers('x-cron-secret') secret?: string) {
+    const expected = this.config.lifecycleCronSecret;
+    if (!expected || secret !== expected) {
+      throw new UnauthorizedException('Invalid cron secret');
+    }
+    return this.notifications.runMatchDigests();
   }
 }

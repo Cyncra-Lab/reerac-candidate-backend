@@ -27,8 +27,11 @@ export class DashboardService {
           linkedInUrl: true,
           verifiedAt: true,
           visibilityBoostUntil: true,
+          openToWork: true,
+          nyscStatus: true,
           profile: { select: { summary: true, skills: true } },
           cvAssets: { select: { id: true }, take: 1 },
+          jobPreference: { select: { quizCompletedAt: true } },
         },
       }),
       this.prisma.application.findMany({
@@ -79,6 +82,10 @@ export class DashboardService {
       insights.push('Get Profile Verification to stand out to recruiters.');
     }
 
+    if (!candidate?.jobPreference?.quizCompletedAt) {
+      insights.push('Set job preferences so we can rank roles For you.');
+    }
+
     const now = new Date();
     const visibilityBoostActive = Boolean(
       candidate?.visibilityBoostUntil && candidate.visibilityBoostUntil > now,
@@ -94,6 +101,8 @@ export class DashboardService {
       Boolean((candidate?.profile?.skills?.length ?? 0) > 0),
       Boolean(candidate?.cvAssets?.length),
       Boolean(candidate?.linkedInUrl),
+      Boolean(candidate?.openToWork),
+      Boolean(candidate?.nyscStatus),
     ];
     const profileCompleted = profileChecks.filter(Boolean).length;
     const profileTotal = profileChecks.length;

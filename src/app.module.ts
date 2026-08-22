@@ -13,6 +13,8 @@ import { MockInterviewsModule } from './mock-interviews/mock-interviews.module.j
 import { MatchingModule } from './matching/matching.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { EventsModule } from './events/events.module.js';
+import { ToolsModule } from './tools/tools.module.js';
+import { AssessmentsModule } from './assessments/assessments.module.js';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { EventsModule } from './events/events.module.js';
     MatchingModule,
     NotificationsModule,
     EventsModule,
+    ToolsModule,
+    AssessmentsModule,
   ],
 })
 export class AppModule {}

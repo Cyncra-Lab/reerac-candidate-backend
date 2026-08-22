@@ -9,7 +9,7 @@ import { createHmac } from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AppConfigService } from '../config/config.service.js';
-import { LlmClient } from '../ai/llm.client.js';
+import { ToolsService } from '../tools/tools.service.js';
 
 const SKU_CATALOG: Record<
   PaymentSku,
@@ -83,7 +83,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
-    private readonly llm: LlmClient,
+    private readonly tools: ToolsService,
   ) {}
 
   catalog() {
@@ -329,7 +329,7 @@ export class BillingService {
     }
 
     if (payment.sku === 'CV_OPTIMIZATION' || payment.sku === 'ALL_ACCESS') {
-      await this.applyCvOptimization(payment.candidateId);
+      await this.tools.runCvOptimization(payment.candidateId);
     }
 
     if (payment.sku === 'LINKEDIN_HANDOFF' || payment.sku === 'ALL_ACCESS') {
@@ -352,86 +352,6 @@ export class BillingService {
 
     this.logger.log(`Fulfilled payment ${paymentId} (${payment.sku})`);
     return payment;
-  }
-
-  private async applyCvOptimization(candidateId: string) {
-    const candidate = await this.prisma.candidate.findUnique({
-      where: { id: candidateId },
-      include: {
-        profile: true,
-        cvScores: { orderBy: { createdAt: 'desc' }, take: 1 },
-        cvAssets: { where: { isPrimary: true }, take: 1 },
-      },
-    });
-    if (!candidate) return;
-
-    const latest = candidate.cvScores[0];
-    const context = [
-      `Name: ${candidate.firstName} ${candidate.lastName}`,
-      `Role interest: ${candidate.roleInterest ?? 'general'}`,
-      `Location: ${candidate.location ?? 'n/a'}`,
-      `Skills: ${(candidate.profile?.skills ?? []).join(', ') || 'n/a'}`,
-      `Summary: ${candidate.profile?.summary ?? latest?.summary ?? 'n/a'}`,
-      `Current score: ${latest?.overallScore ?? 'unknown'}`,
-    ].join('\n');
-
-    let optimizedContent: string | null = null;
-    let overallScore = Math.min(95, (latest?.overallScore ?? 60) + 12);
-    let strengths = [
-      ...(latest?.strengths ?? []),
-      'Optimized keyword alignment',
-    ];
-    let improvements = ['Keep quantifying outcomes in new roles'];
-    let summary = 'CV optimization applied.';
-
-    const ai = await this.llm.chatJson<{
-      overallScore?: number;
-      strengths?: string[];
-      improvements?: string[];
-      summary?: string;
-      optimizedCv?: string;
-    }>([
-      {
-        role: 'system',
-        content:
-          'You are an expert African-market CV coach. Optimize the candidate CV for ATS and recruiter clarity. Return JSON keys: overallScore (0-100), strengths (string[]), improvements (string[]), summary (string), optimizedCv (markdown rewrite).',
-      },
-      {
-        role: 'user',
-        content: `Optimize this candidate profile into a stronger CV:\n${context}`,
-      },
-    ]);
-
-    if (ai) {
-      if (typeof ai.overallScore === 'number') {
-        overallScore = Math.max(1, Math.min(98, Math.round(ai.overallScore)));
-      }
-      if (Array.isArray(ai.strengths) && ai.strengths.length) {
-        strengths = ai.strengths.slice(0, 6).map(String);
-      }
-      if (Array.isArray(ai.improvements) && ai.improvements.length) {
-        improvements = ai.improvements.slice(0, 6).map(String);
-      }
-      if (typeof ai.summary === 'string' && ai.summary.trim()) {
-        summary = ai.summary.trim();
-      }
-      if (typeof ai.optimizedCv === 'string' && ai.optimizedCv.trim()) {
-        optimizedContent = ai.optimizedCv.trim();
-      }
-    }
-
-    await this.prisma.cvScore.create({
-      data: {
-        candidateId,
-        cvAssetId: latest?.cvAssetId ?? candidate.cvAssets[0]?.id,
-        overallScore,
-        strengths,
-        improvements,
-        summary,
-        optimizedContent,
-        source: 'OPTIMIZATION',
-      },
-    });
   }
 
   private async handoffLinkedIn(candidateId: string, paymentId: string) {

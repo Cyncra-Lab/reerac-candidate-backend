@@ -129,6 +129,7 @@ export class EventsConsumerService implements OnModuleInit, OnModuleDestroy {
           b2bApplicantId: payload.applicantId,
           status,
           externalCandidateId: payload.externalCandidateId,
+          interviewSessionId: payload.interviewSessionId,
         });
       }
     }
