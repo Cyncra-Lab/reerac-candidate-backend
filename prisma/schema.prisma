@@ -88,6 +88,23 @@ enum CandidateSource {
   MIGRATION_B2B
 }
 
+enum OpenToWorkStatus {
+  ACTIVELY_LOOKING
+  OPEN
+  NOT_LOOKING
+}
+
+enum NyscStatus {
+  SERVING
+  COMPLETED
+  NOT_APPLICABLE
+}
+
+enum JobSource {
+  NATIVE
+  EXTERNAL
+}
+
 model Candidate {
   id           String   @id @default(cuid())
   /// Local Better Auth user id. Null for SHADOW (pre-signup) rows.
@@ -109,6 +126,19 @@ model Candidate {
   verifiedAt DateTime?
   /// VISIBILITY_BOOST active until this timestamp.
   visibilityBoostUntil DateTime?
+  cvTrialUsedAt DateTime?
+  mockTrialUsedAt DateTime?
+  coverLetterTrialUsedAt DateTime?
+  coachTrialUsedAt DateTime?
+  openToWork OpenToWorkStatus @default(OPEN)
+  salaryExpectationMin Int?
+  salaryCurrency String @default("NGN")
+  preferredWorkMode String?
+  availabilityDate DateTime?
+  educationLevel String?
+  schoolName String?
+  graduationYear Int?
+  nyscStatus NyscStatus @default(NOT_APPLICABLE)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -123,6 +153,11 @@ model Candidate {
   notifications  Notification[]
   whatsAppOptIn  WhatsAppOptIn?
   entitlements   Entitlement[]
+  savedJobs      SavedJob[]
+  jobPreference  CandidateJobPreference?
+  skillAssessments SkillAssessment[]
+  coverLetters   CoverLetter[]
+  coachThreads   CoachThread[]
 
   @@unique([email])
   @@index([accountStatus])
@@ -196,11 +231,15 @@ model JobListing {
   responsibilities String[]
   status           String
   closingDate      DateTime?
+  source           JobSource @default(NATIVE)
+  sourceName       String?
+  sourceUrl        String?
   syncedAt         DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   applications Application[]
   matchScores  MatchScore[]
+  savedBy      SavedJob[]
 
   @@index([status])
   @@index([title])
@@ -226,6 +265,8 @@ model Application {
   status            CandidateApplicationStatus @default(APPLIED)
   matchPercent      Int?
   relativeRankLabel String?
+  b2bInterviewSessionId String?
+  coverLetter       String?                    @db.Text
   appliedAt         DateTime                   @default(now())
   lastSyncedAt      DateTime                   @default(now())
   updatedAt         DateTime                   @updatedAt
@@ -364,6 +405,78 @@ model WhatsAppOptIn {
   candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@map("whatsapp_optins")
+}
+
+model SavedJob {
+  id           String   @id @default(cuid())
+  candidateId  String
+  jobListingId String
+  createdAt    DateTime @default(now())
+
+  candidate  Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobListing JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, jobListingId])
+  @@index([candidateId])
+  @@map("saved_jobs")
+}
+
+model CandidateJobPreference {
+  id              String    @id @default(cuid())
+  candidateId     String    @unique
+  roleFamilies    String[]
+  locations       String[]
+  workModes       String[]
+  salaryFloor     Int?
+  nyscOrEntry     Boolean   @default(false)
+  quizCompletedAt DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("candidate_job_preferences")
+}
+
+model SkillAssessment {
+  id          String   @id @default(cuid())
+  candidateId String
+  skillKey    String
+  skillLabel  String
+  score       Int
+  passed      Boolean
+  completedAt DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, skillKey])
+  @@index([candidateId])
+  @@map("skill_assessments")
+}
+
+model CoverLetter {
+  id           String   @id @default(cuid())
+  candidateId  String
+  jobListingId String?
+  content      String   @db.Text
+  createdAt    DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
+  @@map("cover_letters")
+}
+
+model CoachThread {
+  id          String   @id @default(cuid())
+  candidateId String
+  messages    Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
+  @@map("coach_threads")
 }
 
 model ProcessedEvent {

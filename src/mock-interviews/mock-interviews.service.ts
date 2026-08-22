@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LlmClient } from '../ai/llm.client.js';
+import { consumeAiAccess } from '../tools/ai-access.js';
 
 @Injectable()
 export class MockInterviewsService {
@@ -21,36 +22,7 @@ export class MockInterviewsService {
   }
 
   async start(candidateId: string, roleTitle: string) {
-    const entitlement = await this.prisma.entitlement.findUnique({
-      where: {
-        candidateId_sku: {
-          candidateId,
-          sku: 'MOCK_INTERVIEW_PACK',
-        },
-      },
-    });
-    const allAccess = await this.prisma.entitlement.findUnique({
-      where: {
-        candidateId_sku: { candidateId, sku: 'ALL_ACCESS' },
-      },
-    });
-
-    const packRemaining = entitlement?.remaining ?? 0;
-    const hasAllAccess = (allAccess?.remaining ?? 0) > 0;
-
-    if (packRemaining <= 0 && !hasAllAccess) {
-      throw new BadRequestException(
-        'No mock interview credits. Purchase a pack (3 sessions for ₦15,000).',
-      );
-    }
-
-    // All-Access = unlimited mocks for the period — do not decrement.
-    if (packRemaining > 0) {
-      await this.prisma.entitlement.update({
-        where: { id: entitlement!.id },
-        data: { remaining: { decrement: 1 } },
-      });
-    }
+    await consumeAiAccess(this.prisma, candidateId, 'mock');
 
     const questions = await this.buildQuestions(roleTitle);
 

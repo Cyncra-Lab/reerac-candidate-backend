@@ -167,6 +167,27 @@ export class MatchingService {
           rationale: row.rationale,
         },
       });
+      if (row.score >= 80) {
+        const recent = await this.prisma.notification.findFirst({
+          where: {
+            candidateId,
+            type: 'MATCH_RANK',
+            link: `/jobs/${row.jobId}`,
+            createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+          },
+        });
+        if (!recent) {
+          await this.prisma.notification.create({
+            data: {
+              candidateId,
+              type: 'MATCH_RANK',
+              title: 'You rank highly for a role',
+              body: `${rankLabel} for ${row.title}. Apply or boost visibility so recruiters see you first.`,
+              link: `/jobs/${row.jobId}`,
+            },
+          });
+        }
+      }
       updated++;
     }
 
@@ -180,5 +201,31 @@ export class MatchingService {
       orderBy: { matchPercent: 'desc' },
       take: limit,
     });
+  }
+
+  async previewForJob(candidateId: string, jobId: string) {
+    await this.refreshForCandidate(candidateId);
+    const listing = await this.prisma.jobListing.findFirst({
+      where: { OR: [{ id: jobId }, { b2bJobId: jobId }] },
+    });
+    if (!listing) return { matchPercent: null, relativeRankLabel: null };
+    const row = await this.prisma.matchScore.findUnique({
+      where: {
+        candidateId_jobListingId: {
+          candidateId,
+          jobListingId: listing.id,
+        },
+      },
+    });
+    return {
+      jobListingId: listing.id,
+      matchPercent: row?.matchPercent ?? null,
+      relativeRankLabel: row?.relativeRankLabel ?? null,
+      rationale: row?.rationale ?? null,
+      optimizeHint:
+        row && row.matchPercent < 70
+          ? 'Your CV is below 70% for this job. Optimize it before you apply.'
+          : null,
+    };
   }
 }

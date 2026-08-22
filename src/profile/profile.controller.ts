@@ -1,5 +1,15 @@
 import { Body, Controller, Get, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { IsArray, IsInt, IsOptional, IsString, IsUrl, Min } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Min,
+} from 'class-validator';
+import { NyscStatus, OpenToWorkStatus } from '@prisma/client';
 import { ProfileService } from './profile.service.js';
 import { CandidateAuthGuard } from '../auth/candidate-auth.guard.js';
 
@@ -14,6 +24,23 @@ class UpdateProfileDto {
   @IsOptional() @IsString() summary?: string;
   @IsOptional() @IsArray() skills?: string[];
   @IsOptional() @IsInt() @Min(0) yearsExperience?: number;
+  @IsOptional() @IsEnum(OpenToWorkStatus) openToWork?: OpenToWorkStatus;
+  @IsOptional() @IsInt() @Min(0) salaryExpectationMin?: number;
+  @IsOptional() @IsString() salaryCurrency?: string;
+  @IsOptional() @IsString() preferredWorkMode?: string;
+  @IsOptional() @IsString() availabilityDate?: string;
+  @IsOptional() @IsString() educationLevel?: string;
+  @IsOptional() @IsString() schoolName?: string;
+  @IsOptional() @IsInt() graduationYear?: number;
+  @IsOptional() @IsEnum(NyscStatus) nyscStatus?: NyscStatus;
+}
+
+class JobPreferenceDto {
+  @IsOptional() @IsArray() roleFamilies?: string[];
+  @IsOptional() @IsArray() locations?: string[];
+  @IsOptional() @IsArray() workModes?: string[];
+  @IsOptional() @IsInt() @Min(0) salaryFloor?: number;
+  @IsOptional() @IsBoolean() nyscOrEntry?: boolean;
 }
 
 class UploadCvDto {
@@ -34,6 +61,11 @@ export class ProfileController {
   @Patch()
   update(@Req() req: any, @Body() dto: UpdateProfileDto) {
     return this.profile.update(req.candidate.id, dto);
+  }
+
+  @Patch('preferences')
+  preferences(@Req() req: any, @Body() dto: JobPreferenceDto) {
+    return this.profile.updatePreferences(req.candidate.id, dto);
   }
 
   @Post('cv')

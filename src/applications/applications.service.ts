@@ -122,6 +122,7 @@ export class ApplicationsService {
         b2bApplicant.status,
         b2bApplicant.cvScanStatus,
       ),
+      coverLetter: dto.coverLetter,
     });
 
     if (!priorCopy) {
@@ -211,7 +212,15 @@ export class ApplicationsService {
     jobListingId: string;
     b2bApplicantId: string;
     status: CandidateApplicationStatus;
+    coverLetter?: string;
+    b2bInterviewSessionId?: string;
   }) {
+    const extra = {
+      ...(params.coverLetter ? { coverLetter: params.coverLetter } : {}),
+      ...(params.b2bInterviewSessionId
+        ? { b2bInterviewSessionId: params.b2bInterviewSessionId }
+        : {}),
+    };
     const byApplicant = await this.prisma.application.findUnique({
       where: { b2bApplicantId: params.b2bApplicantId },
       include: { jobListing: true },
@@ -222,6 +231,7 @@ export class ApplicationsService {
         data: {
           status: params.status,
           lastSyncedAt: new Date(),
+          ...extra,
         },
         include: { jobListing: true },
       });
@@ -240,11 +250,13 @@ export class ApplicationsService {
           jobListingId: params.jobListingId,
           b2bApplicantId: params.b2bApplicantId,
           status: params.status,
+          ...extra,
         },
         update: {
           b2bApplicantId: params.b2bApplicantId,
           status: params.status,
           lastSyncedAt: new Date(),
+          ...extra,
         },
         include: { jobListing: true },
       });
@@ -322,12 +334,32 @@ export class ApplicationsService {
     }
   }
 
-  listForCandidate(candidateId: string) {
-    return this.prisma.application.findMany({
-      where: { candidateId },
-      include: { jobListing: true },
-      orderBy: { appliedAt: 'desc' },
-    });
+  async listForCandidate(candidateId: string) {
+    const [applications, saved] = await Promise.all([
+      this.prisma.application.findMany({
+        where: { candidateId },
+        include: { jobListing: true },
+        orderBy: { appliedAt: 'desc' },
+      }),
+      this.prisma.savedJob.findMany({
+        where: { candidateId },
+        include: { jobListing: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+    const staleMs = 14 * 24 * 60 * 60 * 1000;
+    return {
+      applications: applications.map((app) => ({
+        ...app,
+        stale:
+          Date.now() - app.updatedAt.getTime() > staleMs &&
+          ['APPLIED', 'IN_REVIEW', 'SCREENING'].includes(app.status),
+        joinUrl: app.b2bInterviewSessionId
+          ? `/interviews/${app.b2bInterviewSessionId}/join`
+          : null,
+      })),
+      saved: saved.map((s) => s.jobListing),
+    };
   }
 
   async applyStatusFromEvent(params: {
@@ -338,6 +370,7 @@ export class ApplicationsService {
     externalCandidateId?: string;
     jobId?: string;
     email?: string;
+    interviewSessionId?: string;
   }) {
     const seen = await this.prisma.processedEvent.findUnique({
       where: { eventId: params.eventId },
@@ -346,6 +379,7 @@ export class ApplicationsService {
 
     let application = await this.prisma.application.findUnique({
       where: { b2bApplicantId: params.b2bApplicantId },
+      include: { jobListing: true },
     });
 
     let candidateId = params.externalCandidateId;
@@ -356,6 +390,8 @@ export class ApplicationsService {
       });
       candidateId = byEmail?.id;
     }
+
+    const mapped = mapB2bStatusToCandidate(params.status, params.cvScanStatus);
 
     if (
       !application &&
@@ -369,7 +405,8 @@ export class ApplicationsService {
           candidateId,
           jobListingId: listing.id,
           b2bApplicantId: params.b2bApplicantId,
-          status: mapB2bStatusToCandidate(params.status, params.cvScanStatus),
+          status: mapped,
+          b2bInterviewSessionId: params.interviewSessionId,
         });
       } catch (err) {
         this.logger.warn(
@@ -380,10 +417,42 @@ export class ApplicationsService {
       application = await this.prisma.application.update({
         where: { id: application.id },
         data: {
-          status: mapB2bStatusToCandidate(params.status, params.cvScanStatus),
+          status: mapped,
           lastSyncedAt: new Date(),
+          ...(params.interviewSessionId
+            ? { b2bInterviewSessionId: params.interviewSessionId }
+            : {}),
         },
+        include: { jobListing: true },
       });
+    }
+
+    if (application) {
+      const title = application.jobListing?.title ?? 'a role';
+      if (mapped === 'IN_REVIEW' || mapped === 'SCREENING') {
+        await this.prisma.notification.create({
+          data: {
+            candidateId: application.candidateId,
+            type: 'RECRUITER_INTEREST',
+            title: 'A recruiter is reviewing you',
+            body: `Your application for ${title} is in review. A Visibility Boost can put you first for similar roles.`,
+            link: '/candidate/applications',
+          },
+        }).catch(() => undefined);
+      }
+      if (params.interviewSessionId || mapped === 'INTERVIEWED' || mapped === 'IN_PROCESS') {
+        if (params.interviewSessionId) {
+          await this.prisma.notification.create({
+            data: {
+              candidateId: application.candidateId,
+              type: 'INTERVIEW_READY',
+              title: 'Interview ready',
+              body: `Join your interview for ${title}.`,
+              link: `/interviews/${params.interviewSessionId}/join`,
+            },
+          }).catch(() => undefined);
+        }
+      }
     }
 
     await this.prisma.processedEvent.create({

@@ -20,11 +20,14 @@ export class ProfileService {
         cvAssets: { orderBy: { createdAt: 'desc' }, take: 5 },
         cvScores: { orderBy: { createdAt: 'desc' }, take: 1 },
         entitlements: true,
+        jobPreference: true,
+        skillAssessments: true,
       },
     });
     if (!candidate) throw new NotFoundException('Candidate not found');
 
     const now = new Date();
+    const primaryCv = candidate.cvAssets.find((a) => a.isPrimary) ?? candidate.cvAssets[0];
     return {
       ...candidate,
       verified: Boolean(candidate.verifiedAt),
@@ -32,6 +35,15 @@ export class ProfileService {
         candidate.visibilityBoostUntil &&
           candidate.visibilityBoostUntil > now,
       ),
+      trials: {
+        cv: !candidate.cvTrialUsedAt,
+        mock: !candidate.mockTrialUsedAt,
+        coverLetter: !candidate.coverLetterTrialUsedAt,
+        coach: !candidate.coachTrialUsedAt,
+      },
+      primaryCv: primaryCv
+        ? { url: primaryCv.url, fileName: primaryCv.fileName }
+        : null,
     };
   }
 
@@ -48,6 +60,15 @@ export class ProfileService {
       summary?: string;
       skills?: string[];
       yearsExperience?: number;
+      openToWork?: 'ACTIVELY_LOOKING' | 'OPEN' | 'NOT_LOOKING';
+      salaryExpectationMin?: number;
+      salaryCurrency?: string;
+      preferredWorkMode?: string;
+      availabilityDate?: string;
+      educationLevel?: string;
+      schoolName?: string;
+      graduationYear?: number;
+      nyscStatus?: 'SERVING' | 'COMPLETED' | 'NOT_APPLICABLE';
     },
   ) {
     await this.prisma.candidate.update({
@@ -60,6 +81,17 @@ export class ProfileService {
         location: dto.location,
         roleInterest: dto.roleInterest,
         experienceLevel: dto.experienceLevel,
+        openToWork: dto.openToWork,
+        salaryExpectationMin: dto.salaryExpectationMin,
+        salaryCurrency: dto.salaryCurrency,
+        preferredWorkMode: dto.preferredWorkMode,
+        availabilityDate: dto.availabilityDate
+          ? new Date(dto.availabilityDate)
+          : undefined,
+        educationLevel: dto.educationLevel,
+        schoolName: dto.schoolName,
+        graduationYear: dto.graduationYear,
+        nyscStatus: dto.nyscStatus,
       },
     });
 
@@ -78,6 +110,39 @@ export class ProfileService {
       },
     });
 
+    return this.get(candidateId);
+  }
+
+  async updatePreferences(
+    candidateId: string,
+    dto: {
+      roleFamilies?: string[];
+      locations?: string[];
+      workModes?: string[];
+      salaryFloor?: number;
+      nyscOrEntry?: boolean;
+    },
+  ) {
+    await this.prisma.candidateJobPreference.upsert({
+      where: { candidateId },
+      create: {
+        candidateId,
+        roleFamilies: dto.roleFamilies ?? [],
+        locations: dto.locations ?? [],
+        workModes: dto.workModes ?? [],
+        salaryFloor: dto.salaryFloor,
+        nyscOrEntry: dto.nyscOrEntry ?? false,
+        quizCompletedAt: new Date(),
+      },
+      update: {
+        roleFamilies: dto.roleFamilies,
+        locations: dto.locations,
+        workModes: dto.workModes,
+        salaryFloor: dto.salaryFloor,
+        nyscOrEntry: dto.nyscOrEntry,
+        quizCompletedAt: new Date(),
+      },
+    });
     return this.get(candidateId);
   }
 
