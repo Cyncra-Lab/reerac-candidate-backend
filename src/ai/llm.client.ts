@@ -4,6 +4,8 @@ import { AppConfigService } from '../config/config.service.js';
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
+const GROQ_FALLBACK_MODEL = 'openai/gpt-oss-120b';
+
 @Injectable()
 export class LlmClient {
   private readonly logger = new Logger(LlmClient.name);
@@ -22,23 +24,7 @@ export class LlmClient {
 
     try {
       if (this.config.groqApiKey) {
-        const { data } = await axios.post(
-          'https://api.groq.com/openai/v1/chat/completions',
-          {
-            model: this.config.llmModel,
-            temperature: opts?.temperature ?? 0.3,
-            max_tokens: opts?.maxTokens ?? 1200,
-            messages,
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${this.config.groqApiKey}`,
-              'Content-Type': 'application/json',
-            },
-            timeout: 60_000,
-          },
-        );
-        return (data?.choices?.[0]?.message?.content as string | undefined)?.trim() ?? null;
+        return await this.completeGroq(messages, opts, this.config.llmModel);
       }
 
       const { data } = await axios.post(
@@ -63,6 +49,41 @@ export class LlmClient {
     } catch (err) {
       this.logger.warn(`LLM chat failed: ${(err as Error).message}`);
       return null;
+    }
+  }
+
+  private async completeGroq(
+    messages: ChatMessage[],
+    opts: { temperature?: number; maxTokens?: number } | undefined,
+    model: string,
+  ): Promise<string | null> {
+    try {
+      const { data } = await axios.post(
+        'https://api.groq.com/openai/v1/chat/completions',
+        {
+          model,
+          temperature: opts?.temperature ?? 0.3,
+          max_tokens: opts?.maxTokens ?? 1200,
+          messages,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${this.config.groqApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 60_000,
+        },
+      );
+      return (data?.choices?.[0]?.message?.content as string | undefined)?.trim() ?? null;
+    } catch (err) {
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+      if (status === 404 && model !== GROQ_FALLBACK_MODEL) {
+        this.logger.warn(
+          `Groq model ${model} returned 404; retrying ${GROQ_FALLBACK_MODEL}`,
+        );
+        return this.completeGroq(messages, opts, GROQ_FALLBACK_MODEL);
+      }
+      throw err;
     }
   }
 

@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { LlmClient } from '../ai/llm.client.js';
 import { JobsService } from '../jobs/jobs.service.js';
 import { consumeAiAccess, trialStatusFromCandidate } from './ai-access.js';
+import { HUMAN_CAREER_VOICE, humanizeAiText } from '../lib/humanize-ai-text.js';
 
 @Injectable()
 export class ToolsService {
@@ -69,7 +70,7 @@ export class ToolsService {
       {
         role: 'system',
         content:
-          'You are an expert African-market CV coach. Optimize the candidate CV for ATS and recruiter clarity. Return JSON keys: overallScore (0-100), strengths (string[]), improvements (string[]), summary (string), optimizedCv (markdown rewrite).',
+          `You are an expert African-market CV coach. Optimize the candidate CV for ATS and recruiter clarity. Return JSON keys: overallScore (0-100), strengths (string[]), improvements (string[]), summary (string), optimizedCv (markdown rewrite). ${HUMAN_CAREER_VOICE}`,
       },
       {
         role: 'user',
@@ -82,16 +83,16 @@ export class ToolsService {
         overallScore = Math.max(1, Math.min(98, Math.round(ai.overallScore)));
       }
       if (Array.isArray(ai.strengths) && ai.strengths.length) {
-        strengths = ai.strengths.slice(0, 6).map(String);
+        strengths = ai.strengths.slice(0, 6).map((s) => humanizeAiText(String(s)));
       }
       if (Array.isArray(ai.improvements) && ai.improvements.length) {
-        improvements = ai.improvements.slice(0, 6).map(String);
+        improvements = ai.improvements.slice(0, 6).map((s) => humanizeAiText(String(s)));
       }
       if (typeof ai.summary === 'string' && ai.summary.trim()) {
-        summary = ai.summary.trim();
+        summary = humanizeAiText(ai.summary);
       }
       if (typeof ai.optimizedCv === 'string' && ai.optimizedCv.trim()) {
-        optimizedContent = ai.optimizedCv.trim();
+        optimizedContent = humanizeAiText(ai.optimizedCv);
       }
     }
 
@@ -110,6 +111,9 @@ export class ToolsService {
         .filter((line) => line !== '')
         .join('\n');
     }
+
+    optimizedContent = humanizeAiText(optimizedContent);
+    summary = humanizeAiText(summary);
 
     return this.prisma.cvScore.create({
       data: {
@@ -143,7 +147,7 @@ export class ToolsService {
         {
           role: 'system',
           content:
-            'Write a concise, professional cover letter for African hiring markets. 180-280 words. No markdown. Address the hiring team. Quantify where possible. Do not invent employers or metrics.',
+            `Write a concise, professional cover letter for African hiring markets. 180-280 words. No markdown. Address the hiring team. Quantify where possible. Do not invent employers or metrics. ${HUMAN_CAREER_VOICE}`,
         },
         {
           role: 'user',
@@ -166,7 +170,7 @@ export class ToolsService {
       { temperature: 0.4, maxTokens: 700 },
     );
 
-    const content = ai?.trim() || fallback;
+    const content = humanizeAiText(ai?.trim() || fallback);
     const saved = await this.prisma.coverLetter.create({
       data: {
         candidateId,
@@ -177,9 +181,39 @@ export class ToolsService {
     return { id: saved.id, jobId: listing.b2bJobId, content };
   }
 
+  async getCoachThread(candidateId: string) {
+    const thread = await this.prisma.coachThread.findFirst({
+      where: { candidateId },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return {
+      threadId: thread?.id ?? null,
+      messages: this.normalizeCoachMessages(thread?.messages),
+    };
+  }
+
+  private normalizeCoachMessages(raw: unknown): Array<{
+    role: 'user' | 'assistant';
+    content: string;
+  }> {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((entry) => {
+        const row = entry as { role?: unknown; content?: unknown };
+        const content = humanizeAiText(String(row.content ?? ''));
+        if (!content) return null;
+        return {
+          role: row.role === 'user' ? ('user' as const) : ('assistant' as const),
+          content,
+        };
+      })
+      .filter((row): row is { role: 'user' | 'assistant'; content: string } =>
+        Boolean(row),
+      );
+  }
+
   async coach(candidateId: string, message: string) {
     if (!message.trim()) throw new BadRequestException('message is required');
-    await consumeAiAccess(this.prisma, candidateId, 'coach');
 
     const candidate = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
@@ -195,38 +229,51 @@ export class ToolsService {
       where: { candidateId },
       orderBy: { updatedAt: 'desc' },
     });
-    const history = Array.isArray(thread?.messages)
-      ? (thread!.messages as Array<{ role: string; content: string }>)
-      : [];
+    const history = this.normalizeCoachMessages(thread?.messages);
 
-    const fallback =
-      'Focus your applications on roles that match your CV keywords, quantify two recent achievements, and practise a 90-second pitch before interviews.';
+    // First message in a thread uses the trial / paid access; follow-ups continue the chat.
+    if (history.length === 0) {
+      await consumeAiAccess(this.prisma, candidateId, 'coach');
+    }
 
-    const reply =
-      (await this.llm.chatText(
-        [
-          {
-            role: 'system',
-            content:
-              'You are Reerac Career Coach for African job seekers. Be practical, short, and specific. Cover CV, applications, interviews, and salary. Do not invent job offers.',
-          },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              profile: {
-                roleInterest: candidate.roleInterest,
-                location: candidate.location,
-                skills: candidate.profile?.skills,
-                cvScore: candidate.cvScores[0]?.overallScore,
-                openToWork: candidate.openToWork,
-              },
-              history: history.slice(-8),
-              message: message.trim(),
-            }),
-          },
-        ],
-        { temperature: 0.4, maxTokens: 500 },
-      )) || fallback;
+    const firstName = candidate.firstName?.trim() || 'there';
+    const fallback = this.fallbackCoachReply(message, firstName);
+
+    const profileNotes = [
+      `Name: ${candidate.firstName} ${candidate.lastName}`,
+      `Target role: ${candidate.roleInterest ?? 'not set'}`,
+      `Location: ${candidate.location ?? 'not set'}`,
+      `Skills: ${(candidate.profile?.skills ?? []).join(', ') || 'not set'}`,
+      `CV score: ${candidate.cvScores[0]?.overallScore ?? 'unknown'}`,
+      `Open to work: ${candidate.openToWork}`,
+    ].join('\n');
+
+    const chatMessages: Array<{
+      role: 'system' | 'user' | 'assistant';
+      content: string;
+    }> = [
+      {
+        role: 'system',
+        content: `You are Reerac, a warm career coach in a live chat with ${firstName}. Answer the latest message directly. If they greet you (hi, hello, hey, hi Reerac), greet them back by name and ask what they want to work on. Do not dump generic CV or interview advice unless they asked for it. Be brief, specific, and human. Ask one follow-up when it helps. Do not invent job offers.
+
+Candidate background, use only when relevant:
+${profileNotes}
+
+${HUMAN_CAREER_VOICE}`,
+      },
+      ...history.slice(-10).map((row) => ({
+        role: row.role,
+        content: row.content,
+      })),
+      { role: 'user', content: message.trim() },
+    ];
+
+    const reply = humanizeAiText(
+      (await this.llm.chatText(chatMessages, {
+        temperature: 0.55,
+        maxTokens: 500,
+      })) || fallback,
+    );
 
     const messages = [
       ...history,
@@ -245,6 +292,24 @@ export class ToolsService {
       });
     }
 
-    return { reply, threadId: thread.id, messages };
+    return {
+      reply,
+      threadId: thread.id,
+      messages: this.normalizeCoachMessages(messages),
+    };
+  }
+
+  private fallbackCoachReply(message: string, firstName: string): string {
+    const text = message.trim();
+    const first = firstName || 'there';
+    if (
+      /^(hi|hello|hey|yo|hiya|howdy|good\s+(morning|afternoon|evening))\b/i.test(
+        text,
+      ) ||
+      /\b(hi|hello|hey)\s+reerac\b/i.test(text)
+    ) {
+      return `Hi ${first}. I am your Reerac career coach. What would you like to work on today: your CV, interviews, applications, or salary?`;
+    }
+    return `I heard you, ${first}. I can help with CVs, interviews, applications, and salary. Tell me a bit more about what you need and I will get specific.`;
   }
 }

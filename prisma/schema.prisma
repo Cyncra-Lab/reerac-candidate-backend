@@ -26,14 +26,15 @@ model auth_user {
 }
 
 model auth_session {
-  id        String   @id
-  expiresAt DateTime
-  token     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  ipAddress String?
-  userAgent String?
-  userId    String
+  id           String   @id
+  expiresAt    DateTime
+  token        String
+  refreshToken String?  @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  ipAddress    String?
+  userAgent    String?
+  userId       String
 
   user auth_user @relation(fields: [userId], references: [id], onDelete: Cascade)
 

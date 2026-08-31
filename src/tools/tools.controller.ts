@@ -10,7 +10,7 @@ class CoverLetterDto {
 
 class CoachDto {
   @IsString()
-  @MinLength(2)
+  @MinLength(1)
   message!: string;
 }
 
@@ -32,6 +32,11 @@ export class ToolsController {
   @Post('cover-letter')
   coverLetter(@Req() req: any, @Body() dto: CoverLetterDto) {
     return this.tools.coverLetter(req.candidate.id, dto.jobId);
+  }
+
+  @Get('coach')
+  coachThread(@Req() req: any) {
+    return this.tools.getCoachThread(req.candidate.id);
   }
 
   @Post('coach')

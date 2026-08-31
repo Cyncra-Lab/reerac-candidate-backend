@@ -1,7 +1,28 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LlmClient } from '../ai/llm.client.js';
+import { B2bClientService } from '../b2b/b2b-client.service.js';
+import { scoreCvForAts } from './cv-ats-score.js';
+import { extractCvTextFromBuffer } from './cv-text.extract.js';
+
+const CV_UPLOAD_MIME = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+
+type UploadedCvFile = {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+  size: number;
+};
 
 @Injectable()
 export class ProfileService {
@@ -10,6 +31,7 @@ export class ProfileService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmClient,
+    private readonly b2b: B2bClientService,
   ) {}
 
   async get(candidateId: string) {
@@ -146,9 +168,42 @@ export class ProfileService {
     return this.get(candidateId);
   }
 
+  async uploadCvFile(candidateId: string, file?: UploadedCvFile) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('CV file is required');
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      throw new BadRequestException('CV must be 5MB or smaller');
+    }
+    const mime = file.mimetype?.toLowerCase() ?? '';
+    const name = file.originalname?.toLowerCase() ?? '';
+    const allowed =
+      CV_UPLOAD_MIME.has(mime) || /\.(pdf|docx?)$/.test(name);
+    if (!allowed) {
+      throw new BadRequestException(
+        'CV must be a PDF or Word document (.pdf, .doc, .docx).',
+      );
+    }
+    const stored = await this.b2b.uploadProfileCv(file);
+    const extracted = await extractCvTextFromBuffer({
+      buffer: file.buffer,
+      fileName: file.originalname || 'cv.pdf',
+      mimetype: file.mimetype,
+    });
+    return this.uploadCv(
+      candidateId,
+      {
+        url: stored.key,
+        fileName: file.originalname || 'cv.pdf',
+      },
+      extracted,
+    );
+  }
+
   async uploadCv(
     candidateId: string,
     dto: { url: string; fileName: string },
+    cvText?: string | null,
   ) {
     await this.prisma.cvAsset.updateMany({
       where: { candidateId, isPrimary: true },
@@ -168,7 +223,7 @@ export class ProfileService {
       include: { profile: true },
     });
 
-    const extracted = await this.tryFetchCvText(dto.url);
+    const extracted = cvText ?? (await this.tryFetchCvText(dto.url));
     const scored = await this.scoreCv({
       fileName: dto.fileName,
       cvText: extracted,
@@ -225,7 +280,12 @@ export class ProfileService {
     summary?: string | null;
     experienceLevel?: string | null;
   }) {
-    const fallback = this.heuristicScore(input);
+    const fallback = scoreCvForAts({
+      fileName: input.fileName,
+      cvText: input.cvText,
+      roleInterest: input.roleInterest,
+      skills: input.skills,
+    });
 
     const ai = await this.llm.chatJson<{
       overallScore?: number;
@@ -236,7 +296,7 @@ export class ProfileService {
       {
         role: 'system',
         content:
-          'You score CVs for African job markets (0-100). Judge structure, formatting signals, keyword strength, and completeness. Return JSON: overallScore, strengths (3-5), improvements (3-5), summary.',
+          'You are an ATS CV scorer (Jobscan/Teal style). Score 0-100 for parseability, completeness, quantified impact, and keyword strength. A professional, well-structured CV should typically score 75-90. Only go below 70 if the file is thin, unreadable, or missing core sections. Return JSON: overallScore, strengths (3-5), improvements (3-5), summary.',
       },
       {
         role: 'user',
@@ -247,14 +307,20 @@ export class ProfileService {
           skills: input.skills,
           profileSummary: input.summary,
           cvExcerpt: input.cvText?.slice(0, 8000) ?? null,
+          parsedTextChars: input.cvText?.length ?? 0,
         }),
       },
     ]);
 
     if (!ai || typeof ai.overallScore !== 'number') return fallback;
 
+    const aiScore = Math.max(1, Math.min(96, Math.round(ai.overallScore)));
+    const overallScore = input.cvText
+      ? Math.round(fallback.overallScore * 0.55 + aiScore * 0.45)
+      : aiScore;
+
     return {
-      overallScore: Math.max(1, Math.min(98, Math.round(ai.overallScore))),
+      overallScore: Math.max(fallback.overallScore - 4, Math.min(96, overallScore)),
       strengths:
         Array.isArray(ai.strengths) && ai.strengths.length
           ? ai.strengths.slice(0, 6).map(String)
@@ -267,44 +333,6 @@ export class ProfileService {
         typeof ai.summary === 'string' && ai.summary.trim()
           ? ai.summary.trim()
           : fallback.summary,
-    };
-  }
-
-  private heuristicScore(input: {
-    fileName: string;
-    cvText: string | null;
-    roleInterest?: string | null;
-    skills: string[];
-    summary?: string | null;
-    experienceLevel?: string | null;
-  }) {
-    let score = 48;
-    if (input.roleInterest) score += 8;
-    if (input.experienceLevel) score += 6;
-    if (input.skills.length >= 3) score += 10;
-    else if (input.skills.length > 0) score += 5;
-    if (input.summary && input.summary.length > 40) score += 8;
-    if (input.cvText && input.cvText.length > 400) score += 12;
-    if (/\.pdf$/i.test(input.fileName)) score += 4;
-    score = Math.max(35, Math.min(88, score));
-
-    return {
-      overallScore: score,
-      strengths: [
-        input.skills.length
-          ? 'Skills listed on profile'
-          : 'CV file uploaded',
-        input.roleInterest
-          ? 'Clear role interest'
-          : 'Contact profile available',
-      ],
-      improvements: [
-        'Quantify impact with metrics',
-        'Align keywords to target roles',
-        'Tighten formatting and section structure',
-      ],
-      summary:
-        'Baseline CV quality score from profile completeness and upload signals.',
     };
   }
 }

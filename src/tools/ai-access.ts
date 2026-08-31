@@ -38,12 +38,24 @@ export async function consumeAiAccess(
     (!allAccess?.expiresAt || allAccess.expiresAt > now);
   if (allAccessOk) return { via: 'all_access' };
 
-  if (kind === 'mock' && (pack?.remaining ?? 0) > 0) {
-    await prisma.entitlement.update({
-      where: { id: pack!.id },
-      data: { remaining: { decrement: 1 } },
-    });
-    return { via: 'entitlement' };
+  if (kind === 'mock') {
+    if (!candidate.mockTrialUsedAt) {
+      await prisma.candidate.update({
+        where: { id: candidateId },
+        data: { mockTrialUsedAt: now },
+      });
+      return { via: 'trial' };
+    }
+    if ((pack?.remaining ?? 0) > 0) {
+      await prisma.entitlement.update({
+        where: { id: pack!.id },
+        data: { remaining: { decrement: 1 } },
+      });
+      return { via: 'entitlement' };
+    }
+    throw new BadRequestException(
+      'Free trial used. Purchase a mock interview pack (₦15,000 / 3 sessions) or All-Access.',
+    );
   }
 
   if (kind === 'cv' && (pack?.remaining ?? 0) > 0) {
@@ -71,11 +83,9 @@ export async function consumeAiAccess(
   }
 
   const payHint =
-    kind === 'mock'
-      ? 'Purchase a mock interview pack (₦15,000 / 3 sessions) or All-Access.'
-      : kind === 'coach'
-        ? 'Purchase All-Access or CV optimization to continue coaching.'
-        : 'Purchase CV optimization (₦5,000) or All-Access to continue.';
+    kind === 'coach'
+      ? 'Purchase All-Access or CV optimization to continue coaching.'
+      : 'Purchase CV optimization (₦5,000) or All-Access to continue.';
   throw new BadRequestException(
     `Free trial used. ${payHint}`,
   );

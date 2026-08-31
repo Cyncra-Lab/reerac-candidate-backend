@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LlmClient } from '../ai/llm.client.js';
+import { jobMatchesRole } from './role-match.js';
 
 @Injectable()
 export class MatchingService {
@@ -25,7 +26,6 @@ export class MatchingService {
       orderBy: { syncedAt: 'desc' },
     });
 
-    const interest = (candidate.roleInterest ?? '').toLowerCase();
     const skills = new Set(
       (candidate.profile?.skills ?? []).map((s) => s.toLowerCase()),
     );
@@ -46,11 +46,7 @@ export class MatchingService {
     for (const job of jobs) {
       let score = 40;
       const title = job.title.toLowerCase();
-      const interestTokens = interest
-        .split(/[\s,/|-]+/)
-        .map((t) => t.trim())
-        .filter((t) => t.length > 2);
-      if (interestTokens.some((t) => title.includes(t))) score += 25;
+      if (jobMatchesRole(job, candidate.roleInterest)) score += 25;
 
       for (const req of job.requirements) {
         if (skills.has(req.toLowerCase())) score += 5;

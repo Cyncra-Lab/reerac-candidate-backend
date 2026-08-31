@@ -334,6 +334,41 @@ export class ApplicationsService {
     }
   }
 
+  async getForCandidate(candidateId: string, applicationId: string) {
+    const application = await this.prisma.application.findFirst({
+      where: { id: applicationId, candidateId },
+      include: { jobListing: true },
+    });
+    if (!application) throw new NotFoundException('Application not found');
+
+    const candidate = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      select: {
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        location: true,
+        roleInterest: true,
+        experienceLevel: true,
+        linkedInUrl: true,
+      },
+    });
+    const cv = await this.prisma.cvAsset.findFirst({
+      where: { candidateId, isPrimary: true },
+      select: { fileName: true, url: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return this.decorateApplication({
+      ...application,
+      candidate: {
+        ...candidate,
+        cvAssets: cv ? [cv] : [],
+      },
+    });
+  }
+
   async listForCandidate(candidateId: string) {
     const [applications, saved] = await Promise.all([
       this.prisma.application.findMany({
@@ -347,18 +382,28 @@ export class ApplicationsService {
         orderBy: { createdAt: 'desc' },
       }),
     ]);
+    return {
+      applications: applications.map((app) => this.decorateApplication(app)),
+      saved: saved.map((s) => s.jobListing),
+    };
+  }
+
+  private decorateApplication<
+    T extends {
+      status: string;
+      updatedAt: Date;
+      b2bInterviewSessionId?: string | null;
+    },
+  >(app: T) {
     const staleMs = 14 * 24 * 60 * 60 * 1000;
     return {
-      applications: applications.map((app) => ({
-        ...app,
-        stale:
-          Date.now() - app.updatedAt.getTime() > staleMs &&
-          ['APPLIED', 'IN_REVIEW', 'SCREENING'].includes(app.status),
-        joinUrl: app.b2bInterviewSessionId
-          ? `/interviews/${app.b2bInterviewSessionId}/join`
-          : null,
-      })),
-      saved: saved.map((s) => s.jobListing),
+      ...app,
+      stale:
+        Date.now() - app.updatedAt.getTime() > staleMs &&
+        ['APPLIED', 'IN_REVIEW', 'SCREENING'].includes(app.status),
+      joinUrl: app.b2bInterviewSessionId
+        ? `/interviews/${app.b2bInterviewSessionId}/join`
+        : null,
     };
   }
 
