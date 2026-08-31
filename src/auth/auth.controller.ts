@@ -74,8 +74,25 @@ export class AuthController {
     });
     const response = await this.authService.handler(request);
     this.authService.forwardBetterAuthResponse(response, res);
+
+    const path = url.pathname;
+    const isLoginFlow = /sign-in|sign-up|callback|sign-out/.test(path);
+    if (isLoginFlow && response.status < 400) {
+      if (/sign-out/.test(path)) {
+        this.authService.clearRefreshCookie(res);
+      } else {
+        await this.authService.attachRefreshFromBetterAuthResponse(response, res);
+      }
+    }
+
     const body = await response.text();
     res.send(body);
+  }
+
+  @Post('auth/refresh')
+  @HttpCode(HttpStatus.OK)
+  async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.authService.refreshSession(req, res);
   }
 
   @Post('auth/send-otp')

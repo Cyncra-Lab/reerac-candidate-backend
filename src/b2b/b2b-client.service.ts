@@ -50,6 +50,55 @@ export class B2bClientService {
     return data?.data ?? data;
   }
 
+  async uploadProfileCv(file: {
+    buffer: Buffer;
+    originalname: string;
+    mimetype: string;
+  }): Promise<{ key: string; url?: string }> {
+    const toForm = () => {
+      const form = new FormData();
+      form.append(
+        'file',
+        new Blob([new Uint8Array(file.buffer)], {
+          type: file.mimetype || 'application/pdf',
+        }),
+        file.originalname || 'cv.pdf',
+      );
+      return form;
+    };
+
+    try {
+      const { data } = await this.http.post('/internal/cvs', toForm());
+      return this.readUploadKey(data);
+    } catch {
+      const { data } = await this.http.post(
+        '/public/jobs/profile/upload-cv',
+        toForm(),
+      );
+      return this.readUploadKey(data);
+    }
+  }
+
+  private readUploadKey(data: unknown): { key: string; url?: string } {
+    const root = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+    const nested =
+      root.data && typeof root.data === 'object'
+        ? (root.data as Record<string, unknown>)
+        : root;
+    const key =
+      (typeof nested.key === 'string' && nested.key) ||
+      (typeof nested.url === 'string' && nested.url) ||
+      (typeof nested.cvUrl === 'string' && nested.cvUrl) ||
+      '';
+    if (!key) {
+      throw new Error('B2B CV upload did not return a file key');
+    }
+    return {
+      key,
+      url: typeof nested.url === 'string' ? nested.url : undefined,
+    };
+  }
+
   async createApplication(payload: {
     jobId: string;
     externalCandidateId: string;

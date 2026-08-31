@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { jobMatchesRole } from '../matching/role-match.js';
 
 @Injectable()
 export class DashboardService {
@@ -44,10 +45,13 @@ export class DashboardService {
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.matchScore.findMany({
-        where: { candidateId },
+        where: {
+          candidateId,
+          jobListing: { status: 'ACTIVE' },
+        },
         include: { jobListing: true },
         orderBy: { matchPercent: 'desc' },
-        take: 5,
+        take: 40,
       }),
       this.prisma.entitlement.findMany({ where: { candidateId } }),
       this.prisma.notification.findMany({
@@ -107,15 +111,22 @@ export class DashboardService {
     const profileCompleted = profileChecks.filter(Boolean).length;
     const profileTotal = profileChecks.length;
 
+    const roleInterest = candidate?.roleInterest ?? null;
+    const topRoleMatches = roleInterest
+      ? topMatches
+          .filter((row) => jobMatchesRole(row.jobListing, roleInterest))
+          .slice(0, 5)
+      : [];
+
     return {
       candidate: {
         firstName: candidate?.firstName ?? null,
         lastName: candidate?.lastName ?? null,
         email: candidate?.email ?? null,
-        roleInterest: candidate?.roleInterest ?? null,
+        roleInterest,
         hasCv: Boolean(candidate?.cvAssets?.length),
         hasPhone: Boolean(candidate?.phone),
-        hasRoleInterest: Boolean(candidate?.roleInterest),
+        hasRoleInterest: Boolean(roleInterest),
       },
       profileCompletion: {
         completed: profileCompleted,
@@ -131,7 +142,7 @@ export class DashboardService {
       applications,
       overallCvScore: latestScore?.overallScore ?? null,
       cvScoreDetails: latestScore,
-      topMatches,
+      topMatches: topRoleMatches,
       insights,
       notifications,
       entitlements,

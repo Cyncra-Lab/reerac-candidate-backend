@@ -5,8 +5,79 @@ jest.mock('better-auth/adapters/prisma', () => ({
   prismaAdapter: jest.fn(),
 }));
 
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
+
+describe('AuthService.getSessionUser', () => {
+  const prisma = {
+    candidate: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
+    },
+    auth_session: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+  };
+
+  const config = {
+    betterAuthSecret: 'test',
+    betterAuthUrl: 'http://localhost:4100',
+    frontendUrl: 'http://localhost:3000',
+    betterAuthTrustedOrigins: [],
+    isGoogleOAuthConfigured: false,
+  };
+
+  let service: AuthService;
+  let getSession: jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    getSession = jest.fn();
+    service = new AuthService(config as any, prisma as any);
+    (service as any).auth = { handler: jest.fn(), api: { getSession } };
+  });
+
+  it('rejects an idle session so the client can refresh', async () => {
+    getSession.mockResolvedValue({
+      user: { id: 'auth_1', email: 'jane@example.com', name: 'Jane' },
+      session: { id: 'sess_1', token: 'tok' },
+    });
+    prisma.auth_session.findUnique.mockResolvedValue({
+      id: 'sess_1',
+      createdAt: new Date(Date.now() - 90 * 60 * 1000),
+      updatedAt: new Date(Date.now() - 61 * 60 * 1000),
+    });
+
+    await expect(
+      service.getSessionUser({ headers: {} } as any),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('returns the user when the session is still active after hours of work', async () => {
+    const now = new Date();
+    getSession.mockResolvedValue({
+      user: { id: 'auth_1', email: 'jane@example.com', name: 'Jane' },
+      session: { id: 'sess_1', token: 'tok' },
+    });
+    prisma.auth_session.findUnique.mockResolvedValue({
+      id: 'sess_1',
+      createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000),
+      updatedAt: now,
+    });
+
+    await expect(
+      service.getSessionUser({ headers: {} } as any),
+    ).resolves.toEqual({
+      id: 'auth_1',
+      email: 'jane@example.com',
+      name: 'Jane',
+    });
+  });
+});
+
 
 describe('AuthService.ensureCandidate', () => {
   const prisma = {

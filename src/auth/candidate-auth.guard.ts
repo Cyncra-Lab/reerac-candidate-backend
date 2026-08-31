@@ -23,7 +23,8 @@ export class CandidateAuthGuard implements CanActivate {
       req.authUser = user;
       req.candidate = candidate;
       return true;
-    } catch {
+    } catch (err) {
+      if (err instanceof UnauthorizedException) throw err;
       throw new UnauthorizedException('Not authenticated');
     }
   }

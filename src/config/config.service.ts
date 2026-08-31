@@ -102,7 +102,7 @@ export class AppConfigService {
     return (
       this.config.get<string>('CANDIDATE_LLM_MODEL') ??
       this.config.get<string>('GROQ_CHAT_MODEL') ??
-      'llama-3.3-70b-versatile'
+      'openai/gpt-oss-120b'
     );
   }
 

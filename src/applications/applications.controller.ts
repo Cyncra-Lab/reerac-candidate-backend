@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Param,
   Post,
   Req,
   UseGuards,
@@ -38,6 +39,11 @@ export class ApplicationsController {
   @Get()
   list(@Req() req: any) {
     return this.applications.listForCandidate(req.candidate.id);
+  }
+
+  @Get(':id')
+  get(@Req() req: any, @Param('id') id: string) {
+    return this.applications.getForCandidate(req.candidate.id, id);
   }
 
   /**

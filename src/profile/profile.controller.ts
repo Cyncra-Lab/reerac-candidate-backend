@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Patch,
+  Post,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   IsArray,
   IsBoolean,
@@ -71,5 +82,16 @@ export class ProfileController {
   @Post('cv')
   uploadCv(@Req() req: any, @Body() dto: UploadCvDto) {
     return this.profile.uploadCv(req.candidate.id, dto);
+  }
+
+  @Post('cv/file')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  uploadCvFile(
+    @Req() req: any,
+    @UploadedFile() file?: { buffer: Buffer; originalname: string; mimetype: string; size: number },
+  ) {
+    return this.profile.uploadCvFile(req.candidate.id, file);
   }
 }

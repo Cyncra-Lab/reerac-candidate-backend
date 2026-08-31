@@ -42,9 +42,11 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
     "ioredis": "^5.10.1",
+    "pdf-parse": "^2.4.5",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.9.4",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "word-extractor": "^1.0.4"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.0",

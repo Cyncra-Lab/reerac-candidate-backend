@@ -41,14 +41,14 @@ const SKU_CATALOG: Record<
     name: 'LinkedIn Profile Revamp',
     unitLabel: 'per profile',
     description:
-      'Rep-assisted LinkedIn rewrite — headline, About, experience, and searchability.',
+      'Rep-assisted LinkedIn rewrite: headline, About, experience, and searchability.',
   },
   MOCK_INTERVIEW_PACK: {
     amountNgn: 15000,
     name: 'AI Mock Interview',
     unitLabel: '3 sessions',
     description:
-      'Practice interview turns with scored feedback and a clear improvement list.',
+      'One free practice interview, then 3 extra sessions with scored feedback.',
   },
   PREMIUM_WHATSAPP: {
     amountNgn: 3000,
