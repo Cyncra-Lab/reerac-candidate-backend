@@ -370,15 +370,36 @@ export class ApplicationsService {
   }
 
   async listForCandidate(candidateId: string) {
+    const jobCard = {
+      id: true,
+      b2bJobId: true,
+      title: true,
+      companyName: true,
+      location: true,
+      salaryMin: true,
+      salaryMax: true,
+      currency: true,
+      source: true,
+      sourceName: true,
+    } as const;
     const [applications, saved] = await Promise.all([
       this.prisma.application.findMany({
         where: { candidateId },
-        include: { jobListing: true },
+        select: {
+          id: true,
+          status: true,
+          appliedAt: true,
+          updatedAt: true,
+          b2bInterviewSessionId: true,
+          matchPercent: true,
+          relativeRankLabel: true,
+          jobListing: { select: jobCard },
+        },
         orderBy: { appliedAt: 'desc' },
       }),
       this.prisma.savedJob.findMany({
         where: { candidateId },
-        include: { jobListing: true },
+        select: { jobListing: { select: jobCard } },
         orderBy: { createdAt: 'desc' },
       }),
     ]);

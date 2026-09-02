@@ -127,7 +127,7 @@ export class JobsService {
   }
 
   async list(params: JobListParams) {
-    await this.syncCatalogIfStale();
+    this.syncCatalogIfStale();
     const page = params.page ?? 1;
     const limit = Math.min(params.limit ?? 20, 100);
     const today = startOfTodayLagos();
@@ -163,9 +163,28 @@ export class JobsService {
     }
     if (and.length) where.AND = and;
 
-    let data = await this.prisma.jobListing.findMany({
+    const data = await this.prisma.jobListing.findMany({
       where,
       orderBy: { syncedAt: 'desc' },
+      select: {
+        id: true,
+        b2bJobId: true,
+        companyName: true,
+        title: true,
+        department: true,
+        location: true,
+        workMode: true,
+        type: true,
+        salaryMin: true,
+        salaryMax: true,
+        currency: true,
+        status: true,
+        closingDate: true,
+        source: true,
+        sourceName: true,
+        sourceUrl: true,
+        syncedAt: true,
+      },
     });
 
     const decorated = await this.decorateListings(data, params.candidateId);
@@ -251,17 +270,13 @@ export class JobsService {
     return score;
   }
 
-  private async syncCatalogIfStale() {
+  private syncCatalogIfStale() {
     const now = Date.now();
     if (now - this.lastCatalogSyncAt < 60_000) return;
     this.lastCatalogSyncAt = now;
-    try {
-      await this.syncFromB2b();
-    } catch (err) {
-      this.logger.warn(
-        `Catalog sync skipped: ${(err as Error).message}`,
-      );
-    }
+    void this.syncFromB2b().catch((err) => {
+      this.logger.warn(`Catalog sync skipped: ${(err as Error).message}`);
+    });
   }
 
   private applyPreferences<
