@@ -1,5 +1,22 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
-import { IsString, MinLength } from 'class-validator';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import {
+  IsArray,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import { CandidateAuthGuard } from '../auth/candidate-auth.guard.js';
 import { ToolsService } from './tools.service.js';
 
@@ -8,10 +25,44 @@ class CoverLetterDto {
   jobId!: string;
 }
 
+class CoachAttachmentDto {
+  @IsString()
+  @MaxLength(120)
+  name!: string;
+
+  @IsString()
+  @MaxLength(120)
+  mime!: string;
+
+  @IsIn(['image', 'file'])
+  kind!: 'image' | 'file';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(350_000)
+  previewUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  textExcerpt?: string;
+}
+
 class CoachDto {
+  @IsOptional()
   @IsString()
   @MinLength(1)
-  message!: string;
+  message?: string;
+
+  @IsOptional()
+  @IsString()
+  threadId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CoachAttachmentDto)
+  attachments?: CoachAttachmentDto[];
 }
 
 @Controller('tools')
@@ -34,13 +85,26 @@ export class ToolsController {
     return this.tools.coverLetter(req.candidate.id, dto.jobId);
   }
 
+  @Get('coach/threads')
+  coachThreads(@Req() req: any) {
+    return this.tools.listCoachThreads(req.candidate.id);
+  }
+
+  @Post('coach/threads')
+  createCoachThread(@Req() req: any) {
+    return this.tools.createCoachThread(req.candidate.id);
+  }
+
   @Get('coach')
-  coachThread(@Req() req: any) {
-    return this.tools.getCoachThread(req.candidate.id);
+  coachThread(@Req() req: any, @Query('threadId') threadId?: string) {
+    return this.tools.getCoachThread(req.candidate.id, threadId);
   }
 
   @Post('coach')
   coach(@Req() req: any, @Body() dto: CoachDto) {
-    return this.tools.coach(req.candidate.id, dto.message);
+    return this.tools.coach(req.candidate.id, dto.message ?? '', {
+      threadId: dto.threadId,
+      attachments: dto.attachments,
+    });
   }
 }

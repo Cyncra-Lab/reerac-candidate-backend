@@ -181,39 +181,168 @@ export class ToolsService {
     return { id: saved.id, jobId: listing.b2bJobId, content };
   }
 
-  async getCoachThread(candidateId: string) {
-    const thread = await this.prisma.coachThread.findFirst({
+  async listCoachThreads(candidateId: string) {
+    const threads = await this.prisma.coachThread.findMany({
       where: { candidateId },
       orderBy: { updatedAt: 'desc' },
+      take: 40,
+      select: {
+        id: true,
+        title: true,
+        messages: true,
+        updatedAt: true,
+        createdAt: true,
+      },
     });
     return {
-      threadId: thread?.id ?? null,
-      messages: this.normalizeCoachMessages(thread?.messages),
+      threads: threads.map((thread) => {
+        const messages = this.normalizeCoachMessages(thread.messages);
+        const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+        const last = messages[messages.length - 1];
+        return {
+          id: thread.id,
+          title:
+            thread.title?.trim() ||
+            lastUser?.content.slice(0, 60) ||
+            'New conversation',
+          preview: last?.content.slice(0, 100) ?? '',
+          updatedAt: thread.updatedAt,
+          createdAt: thread.createdAt,
+          messageCount: messages.length,
+        };
+      }),
+    };
+  }
+
+  async getCoachThread(candidateId: string, threadId?: string) {
+    const thread = threadId
+      ? await this.prisma.coachThread.findFirst({
+          where: { id: threadId, candidateId },
+        })
+      : await this.prisma.coachThread.findFirst({
+          where: { candidateId },
+          orderBy: { updatedAt: 'desc' },
+        });
+    if (!thread) {
+      return { threadId: null, title: null, messages: [] };
+    }
+    const messages = this.normalizeCoachMessages(thread.messages);
+    return {
+      threadId: thread.id,
+      title:
+        thread.title?.trim() ||
+        messages.find((m) => m.role === 'user')?.content.slice(0, 60) ||
+        'New conversation',
+      messages,
+    };
+  }
+
+  async createCoachThread(candidateId: string) {
+    const thread = await this.prisma.coachThread.create({
+      data: {
+        candidateId,
+        title: 'New conversation',
+        messages: [],
+      },
+    });
+    return {
+      threadId: thread.id,
+      title: thread.title,
+      messages: [],
     };
   }
 
   private normalizeCoachMessages(raw: unknown): Array<{
     role: 'user' | 'assistant';
     content: string;
+    attachments?: Array<{
+      name: string;
+      mime: string;
+      kind: 'image' | 'file';
+      previewUrl?: string;
+      textExcerpt?: string;
+    }>;
   }> {
+    type CoachAttachment = {
+      name: string;
+      mime: string;
+      kind: 'image' | 'file';
+      previewUrl?: string;
+      textExcerpt?: string;
+    };
+    type CoachMessage = {
+      role: 'user' | 'assistant';
+      content: string;
+      attachments?: CoachAttachment[];
+    };
+
     if (!Array.isArray(raw)) return [];
-    return raw
-      .map((entry) => {
-        const row = entry as { role?: unknown; content?: unknown };
-        const content = humanizeAiText(String(row.content ?? ''));
-        if (!content) return null;
-        return {
-          role: row.role === 'user' ? ('user' as const) : ('assistant' as const),
-          content,
-        };
-      })
-      .filter((row): row is { role: 'user' | 'assistant'; content: string } =>
-        Boolean(row),
-      );
+
+    const messages: CoachMessage[] = [];
+    for (const entry of raw) {
+      const row = entry as {
+        role?: unknown;
+        content?: unknown;
+        attachments?: unknown;
+      };
+      const content = humanizeAiText(String(row.content ?? ''));
+      if (!content && !Array.isArray(row.attachments)) continue;
+
+      let attachments: CoachAttachment[] | undefined;
+      if (Array.isArray(row.attachments)) {
+        const parsed: CoachAttachment[] = [];
+        for (const item of row.attachments) {
+          const a = item as {
+            name?: unknown;
+            mime?: unknown;
+            kind?: unknown;
+            previewUrl?: unknown;
+            textExcerpt?: unknown;
+          };
+          const name = String(a.name ?? '').trim();
+          if (!name) continue;
+          const attachment: CoachAttachment = {
+            name,
+            mime: String(a.mime ?? 'application/octet-stream'),
+            kind: a.kind === 'image' ? 'image' : 'file',
+          };
+          if (typeof a.previewUrl === 'string') {
+            attachment.previewUrl = a.previewUrl;
+          }
+          if (typeof a.textExcerpt === 'string') {
+            attachment.textExcerpt = a.textExcerpt.slice(0, 4000);
+          }
+          parsed.push(attachment);
+        }
+        if (parsed.length) attachments = parsed;
+      }
+
+      messages.push({
+        role: row.role === 'user' ? 'user' : 'assistant',
+        content: content || (attachments?.length ? 'Shared an attachment' : ''),
+        ...(attachments ? { attachments } : {}),
+      });
+    }
+    return messages;
   }
 
-  async coach(candidateId: string, message: string) {
-    if (!message.trim()) throw new BadRequestException('message is required');
+  async coach(
+    candidateId: string,
+    message: string,
+    opts?: {
+      threadId?: string;
+      attachments?: Array<{
+        name: string;
+        mime: string;
+        kind: 'image' | 'file';
+        previewUrl?: string;
+        textExcerpt?: string;
+      }>;
+    },
+  ) {
+    if (!message.trim() && !(opts?.attachments?.length)) {
+      throw new BadRequestException('message is required');
+    }
 
     const candidate = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
@@ -225,19 +354,58 @@ export class ToolsService {
     });
     if (!candidate) throw new NotFoundException('Candidate not found');
 
-    let thread = await this.prisma.coachThread.findFirst({
-      where: { candidateId },
-      orderBy: { updatedAt: 'desc' },
-    });
-    const history = this.normalizeCoachMessages(thread?.messages);
+    let thread = opts?.threadId
+      ? await this.prisma.coachThread.findFirst({
+          where: { id: opts.threadId, candidateId },
+        })
+      : null;
+    if (opts?.threadId && !thread) {
+      throw new NotFoundException('Conversation not found');
+    }
+    if (!thread) {
+      thread = await this.prisma.coachThread.findFirst({
+        where: { candidateId },
+        orderBy: { updatedAt: 'desc' },
+      });
+    }
 
-    // First message in a thread uses the trial / paid access; follow-ups continue the chat.
+    const history = this.normalizeCoachMessages(thread?.messages);
+    const attachments = (opts?.attachments ?? [])
+      .map((a) => ({
+        name: String(a.name ?? '').trim().slice(0, 120),
+        mime: String(a.mime ?? 'application/octet-stream').slice(0, 120),
+        kind: (a.kind === 'image' ? 'image' : 'file') as 'image' | 'file',
+        previewUrl:
+          typeof a.previewUrl === 'string' && a.previewUrl.startsWith('data:')
+            ? a.previewUrl.slice(0, 350_000)
+            : undefined,
+        textExcerpt:
+          typeof a.textExcerpt === 'string'
+            ? a.textExcerpt.slice(0, 4000)
+            : undefined,
+      }))
+      .filter((a) => a.name)
+      .slice(0, 3);
+
     if (history.length === 0) {
       await consumeAiAccess(this.prisma, candidateId, 'coach');
     }
 
     const firstName = candidate.firstName?.trim() || 'there';
-    const fallback = this.fallbackCoachReply(message, firstName);
+    const userText = message.trim() || 'Please review the attachment I shared.';
+    const attachmentNote = attachments.length
+      ? `\n\nAttachments:\n${attachments
+          .map((a) => {
+            const bits = [`- ${a.name} (${a.mime}, ${a.kind})`];
+            if (a.textExcerpt) bits.push(`Excerpt:\n${a.textExcerpt}`);
+            else if (a.kind === 'image')
+              bits.push('Candidate shared an image. Comment on what they ask about it.');
+            return bits.join('\n');
+          })
+          .join('\n')}`
+      : '';
+
+    const fallback = this.fallbackCoachReply(userText, firstName);
 
     const profileNotes = [
       `Name: ${candidate.firstName} ${candidate.lastName}`,
@@ -254,7 +422,7 @@ export class ToolsService {
     }> = [
       {
         role: 'system',
-        content: `You are Reerac, a warm career coach in a live chat with ${firstName}. Answer the latest message directly. If they greet you (hi, hello, hey, hi Reerac), greet them back by name and ask what they want to work on. Do not dump generic CV or interview advice unless they asked for it. Be brief, specific, and human. Ask one follow-up when it helps. Do not invent job offers.
+        content: `You are Reerac, a warm career coach in a live chat with ${firstName}. Answer the latest message directly. If they greet you (hi, hello, hey, hi Reerac), greet them back by name and ask what they want to work on. Do not dump generic CV or interview advice unless they asked for it. Be brief, specific, and human. Ask one follow-up when it helps. Do not invent job offers. If they attached a file or image, acknowledge it and give practical advice based on the excerpt or stated context.
 
 Candidate background, use only when relevant:
 ${profileNotes}
@@ -265,7 +433,7 @@ ${HUMAN_CAREER_VOICE}`,
         role: row.role,
         content: row.content,
       })),
-      { role: 'user', content: message.trim() },
+      { role: 'user', content: `${userText}${attachmentNote}` },
     ];
 
     const reply = humanizeAiText(
@@ -275,26 +443,37 @@ ${HUMAN_CAREER_VOICE}`,
       })) || fallback,
     );
 
+    const userMessage = {
+      role: 'user' as const,
+      content: userText,
+      ...(attachments.length ? { attachments } : {}),
+    };
     const messages = [
       ...history,
-      { role: 'user', content: message.trim() },
-      { role: 'assistant', content: reply },
+      userMessage,
+      { role: 'assistant' as const, content: reply },
     ].slice(-20);
+
+    const title =
+      thread?.title?.trim() && thread.title !== 'New conversation'
+        ? thread.title
+        : userText.slice(0, 60);
 
     if (thread) {
       thread = await this.prisma.coachThread.update({
         where: { id: thread.id },
-        data: { messages },
+        data: { messages, title },
       });
     } else {
       thread = await this.prisma.coachThread.create({
-        data: { candidateId, messages },
+        data: { candidateId, messages, title },
       });
     }
 
     return {
       reply,
       threadId: thread.id,
+      title: thread.title,
       messages: this.normalizeCoachMessages(messages),
     };
   }
