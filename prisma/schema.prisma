@@ -498,3 +498,32 @@ model NotificationCampaignLog {
   @@index([candidateId, campaign, sentAt])
   @@map("notification_campaign_logs")
 }
+
+model CvAtsRubric {
+  id            String   @id @default(cuid())
+  roleKey       String
+  seniorityBand String
+  rubric        Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  caches        CvAtsScoreCache[]
+
+  @@unique([roleKey, seniorityBand])
+  @@map("cv_ats_rubrics")
+}
+
+model CvAtsScoreCache {
+  id           String   @id @default(cuid())
+  rubricId     String
+  textHash     String
+  overallScore Int
+  strengths    String[]
+  improvements String[]
+  summary      String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  rubric CvAtsRubric @relation(fields: [rubricId], references: [id], onDelete: Cascade)
+
+  @@unique([rubricId, textHash])
+  @@map("cv_ats_score_cache")
+}

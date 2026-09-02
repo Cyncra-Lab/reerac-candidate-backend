@@ -1,5 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
+import NodeFormData from 'form-data';
 import { AppConfigService } from '../config/config.service.js';
 
 export type B2bPublicJob = {
@@ -23,6 +28,7 @@ export type B2bPublicJob = {
 
 @Injectable()
 export class B2bClientService {
+  private readonly logger = new Logger(B2bClientService.name);
   private readonly http: AxiosInstance;
 
   constructor(private readonly config: AppConfigService) {
@@ -46,7 +52,9 @@ export class B2bClientService {
   }
 
   async getJob(jobId: string): Promise<B2bPublicJob> {
-    const { data } = await this.http.get(`/internal/jobs/${jobId}`);
+    const { data } = await this.http.get(`/internal/jobs/${jobId}`, {
+      timeout: 8_000,
+    });
     return data?.data ?? data;
   }
 
@@ -55,27 +63,44 @@ export class B2bClientService {
     originalname: string;
     mimetype: string;
   }): Promise<{ key: string; url?: string }> {
-    const toForm = () => {
-      const form = new FormData();
-      form.append(
-        'file',
-        new Blob([new Uint8Array(file.buffer)], {
-          type: file.mimetype || 'application/pdf',
-        }),
-        file.originalname || 'cv.pdf',
-      );
-      return form;
+    const postCv = async (path: string) => {
+      const form = new NodeFormData();
+      form.append('file', file.buffer, {
+        filename: file.originalname || 'cv.pdf',
+        contentType: file.mimetype || 'application/pdf',
+      });
+      const { data } = await this.http.post(path, form, {
+        headers: form.getHeaders(),
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        timeout: 45_000,
+      });
+      return this.readUploadKey(data);
     };
 
     try {
-      const { data } = await this.http.post('/internal/cvs', toForm());
-      return this.readUploadKey(data);
-    } catch {
-      const { data } = await this.http.post(
-        '/public/jobs/profile/upload-cv',
-        toForm(),
+      return await postCv('/internal/cvs');
+    } catch (err) {
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+      this.logger.warn(
+        `Internal CV upload failed${status ? ` (${status})` : ''}: ${(err as Error).message}`,
       );
-      return this.readUploadKey(data);
+      try {
+        return await postCv('/public/jobs/profile/upload-cv');
+      } catch (fallbackErr) {
+        const message =
+          (axios.isAxiosError(fallbackErr) &&
+            (fallbackErr.response?.data?.error?.message ||
+              fallbackErr.response?.data?.message)) ||
+          (fallbackErr as Error).message ||
+          'Could not store CV';
+        this.logger.error(`CV storage failed: ${message}`);
+        throw new BadGatewayException(
+          typeof message === 'string'
+            ? message
+            : 'Could not store CV. Try again.',
+        );
+      }
     }
   }
 

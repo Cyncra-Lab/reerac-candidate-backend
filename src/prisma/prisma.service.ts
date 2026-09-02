@@ -19,8 +19,8 @@ export class PrismaService
         this.$connect(),
         new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error('Database connect timed out after 12s')),
-            12_000,
+            () => reject(new Error('Database connect timed out after 45s')),
+            45_000,
           ),
         ),
       ]);

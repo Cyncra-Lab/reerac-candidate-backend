@@ -2,6 +2,20 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { jobMatchesRole } from '../matching/role-match.js';
 
+const jobCardSelect = {
+  id: true,
+  b2bJobId: true,
+  title: true,
+  companyName: true,
+  location: true,
+  workMode: true,
+  type: true,
+  salaryMin: true,
+  salaryMax: true,
+  currency: true,
+  department: true,
+} as const;
+
 @Injectable()
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
@@ -9,11 +23,12 @@ export class DashboardService {
   async getHome(candidateId: string) {
     const [
       candidate,
+      applicationCount,
+      activeApplicationCount,
       applications,
       latestScore,
       topMatches,
       entitlements,
-      notifications,
     ] = await Promise.all([
       this.prisma.candidate.findUnique({
         where: { id: candidateId },
@@ -35,29 +50,54 @@ export class DashboardService {
           jobPreference: { select: { quizCompletedAt: true } },
         },
       }),
+      this.prisma.application.count({ where: { candidateId } }),
+      this.prisma.application.count({
+        where: {
+          candidateId,
+          status: { notIn: ['HIRED', 'NOT_SELECTED'] },
+        },
+      }),
       this.prisma.application.findMany({
         where: { candidateId },
-        include: { jobListing: true },
+        select: {
+          id: true,
+          status: true,
+          appliedAt: true,
+          jobListing: {
+            select: {
+              id: true,
+              b2bJobId: true,
+              title: true,
+              companyName: true,
+            },
+          },
+        },
         orderBy: { appliedAt: 'desc' },
+        take: 5,
       }),
       this.prisma.cvScore.findFirst({
         where: { candidateId },
         orderBy: { createdAt: 'desc' },
+        select: { overallScore: true },
       }),
       this.prisma.matchScore.findMany({
         where: {
           candidateId,
           jobListing: { status: 'ACTIVE' },
         },
-        include: { jobListing: true },
+        select: {
+          id: true,
+          jobListingId: true,
+          matchPercent: true,
+          relativeRankLabel: true,
+          jobListing: { select: jobCardSelect },
+        },
         orderBy: { matchPercent: 'desc' },
         take: 40,
       }),
-      this.prisma.entitlement.findMany({ where: { candidateId } }),
-      this.prisma.notification.findMany({
+      this.prisma.entitlement.findMany({
         where: { candidateId },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
+        select: { sku: true, remaining: true },
       }),
     ]);
 
@@ -66,10 +106,10 @@ export class DashboardService {
       insights.push('Upload your CV to unlock your Overall CV Score.');
     } else if (latestScore.overallScore < 70) {
       insights.push(
-        'Your CV score is below 70 — CV optimization can improve interview callbacks.',
+        'Your CV score is below 70. CV optimization can improve interview callbacks.',
       );
     }
-    if (applications.length === 0) {
+    if (applicationCount === 0) {
       insights.push('Browse open roles and apply to start tracking status here.');
     }
     const mockEntitlement = entitlements.find(
@@ -134,18 +174,13 @@ export class DashboardService {
         percent: Math.round((profileCompleted / profileTotal) * 100),
       },
       totals: {
-        applications: applications.length,
-        activeApplications: applications.filter(
-          (a) => !['HIRED', 'NOT_SELECTED'].includes(a.status),
-        ).length,
+        applications: applicationCount,
+        activeApplications: activeApplicationCount,
       },
       applications,
       overallCvScore: latestScore?.overallScore ?? null,
-      cvScoreDetails: latestScore,
       topMatches: topRoleMatches,
       insights,
-      notifications,
-      entitlements,
       verified: Boolean(candidate?.verifiedAt),
       visibilityBoostActive,
     };
