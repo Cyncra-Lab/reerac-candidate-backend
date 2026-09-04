@@ -133,6 +133,7 @@ export class JobsService {
     const today = startOfTodayLagos();
     const where: Prisma.JobListingWhereInput = {
       status: { in: ['ACTIVE', 'active', 'PAUSED', 'paused'] },
+      hiddenAt: null,
     };
     const and: Prisma.JobListingWhereInput[] = [
       {

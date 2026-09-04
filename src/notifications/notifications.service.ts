@@ -65,6 +65,14 @@ export class NotificationsService {
     });
   }
 
+  private async isAutomationEnabled(campaign: string): Promise<boolean> {
+    const row = await this.prisma.notificationAutomationSetting.findUnique({
+      where: { campaign },
+    });
+    // Default enabled when no row yet
+    return row?.enabled ?? true;
+  }
+
   /** Lifecycle campaigns: low CV score, mock lapsed, placed re-engagement. */
   async runLifecycleCampaigns() {
     const week = 7 * 24 * 60 * 60 * 1000;
@@ -89,7 +97,10 @@ export class NotificationsService {
         (e) => e.sku === 'CV_OPTIMIZATION' && e.remaining > 0,
       );
       if (score != null && score < 70 && !hasOpt) {
-        if (!(await this.recentlySent(c.id, 'LOW_CV_SCORE', week))) {
+        if (
+          (await this.isAutomationEnabled('LOW_CV_SCORE')) &&
+          !(await this.recentlySent(c.id, 'LOW_CV_SCORE', week))
+        ) {
           await this.dispatch(c.id, c.email, c.firstName, {
             campaign: 'LOW_CV_SCORE',
             title: 'Improve your CV score',
@@ -104,7 +115,10 @@ export class NotificationsService {
         lastMock &&
         Date.now() - lastMock.createdAt.getTime() > month
       ) {
-        if (!(await this.recentlySent(c.id, 'MOCK_LAPSED', month))) {
+        if (
+          (await this.isAutomationEnabled('MOCK_LAPSED')) &&
+          !(await this.recentlySent(c.id, 'MOCK_LAPSED', month))
+        ) {
           await this.dispatch(c.id, c.email, c.firstName, {
             campaign: 'MOCK_LAPSED',
             title: 'Keep your interview skills sharp',
@@ -119,7 +133,10 @@ export class NotificationsService {
         hired &&
         Date.now() - hired.updatedAt.getTime() > sixMonths
       ) {
-        if (!(await this.recentlySent(c.id, 'PLACED_REENGAGE', sixMonths))) {
+        if (
+          (await this.isAutomationEnabled('PLACED_REENGAGE')) &&
+          !(await this.recentlySent(c.id, 'PLACED_REENGAGE', sixMonths))
+        ) {
           await this.dispatch(c.id, c.email, c.firstName, {
             campaign: 'PLACED_REENGAGE',
             title: 'Refresh your profile',
@@ -158,6 +175,7 @@ export class NotificationsService {
           e.remaining > 0,
       );
       const campaign = premium ? 'MATCH_DIGEST_DAILY' : 'MATCH_DIGEST_WEEKLY';
+      if (!(await this.isAutomationEnabled(campaign))) continue;
       const window = premium ? day : week;
       if (await this.recentlySent(c.id, campaign, window)) continue;
       if (!c.lifecycleEmailOptIn && !premium) continue;

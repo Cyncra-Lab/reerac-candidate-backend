@@ -82,6 +82,8 @@ enum CandidateAccountStatus {
   SHADOW
   /// Signed up; authUserId is set.
   ACTIVE
+  /// Platform-admin suspended — login and APIs blocked.
+  SUSPENDED
 }
 
 enum CandidateSource {
@@ -121,6 +123,8 @@ model Candidate {
   accountStatus CandidateAccountStatus @default(ACTIVE)
   source        CandidateSource        @default(SIGNUP)
   migratedAt    DateTime?
+  suspendedAt   DateTime?
+  suspendReason String?
   /// Marketing / lifecycle email opt-in (in-app notifications still delivered).
   lifecycleEmailOptIn Boolean @default(true)
   /// Set when PROFILE_VERIFICATION is purchased.
@@ -235,6 +239,8 @@ model JobListing {
   source           JobSource @default(NATIVE)
   sourceName       String?
   sourceUrl        String?
+  /// Platform-admin hide — excluded from B2C browse until cleared.
+  hiddenAt         DateTime?
   syncedAt         DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -498,6 +504,17 @@ model NotificationCampaignLog {
 
   @@index([candidateId, campaign, sentAt])
   @@map("notification_campaign_logs")
+}
+
+/// Platform-admin toggles for B2C lifecycle email automations.
+model NotificationAutomationSetting {
+  id        String   @id @default(cuid())
+  campaign  String   @unique
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@map("notification_automation_settings")
 }
 
 model CvAtsRubric {
