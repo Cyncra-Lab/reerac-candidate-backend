@@ -386,6 +386,13 @@ export class AuthService implements OnModuleInit {
       where: { authUserId: authUser.id },
     });
     if (byAuth) {
+      if (byAuth.accountStatus === 'SUSPENDED') {
+        throw new UnauthorizedException({
+          code: 'ACCOUNT_SUSPENDED',
+          message:
+            'This candidate account has been suspended. Contact support.',
+        });
+      }
       const data: {
         email?: string;
         firstName?: string;
@@ -395,7 +402,7 @@ export class AuthService implements OnModuleInit {
       if (byAuth.email !== email) data.email = email;
       if (!byAuth.firstName && firstName) data.firstName = firstName;
       if (!byAuth.lastName && lastName) data.lastName = lastName;
-      if (byAuth.accountStatus !== 'ACTIVE') data.accountStatus = 'ACTIVE';
+      if (byAuth.accountStatus === 'SHADOW') data.accountStatus = 'ACTIVE';
       if (Object.keys(data).length === 0) return byAuth;
       return this.prisma.candidate.update({
         where: { id: byAuth.id },
@@ -408,6 +415,13 @@ export class AuthService implements OnModuleInit {
     });
 
     if (byEmail) {
+      if (byEmail.accountStatus === 'SUSPENDED') {
+        throw new UnauthorizedException({
+          code: 'ACCOUNT_SUSPENDED',
+          message:
+            'This candidate account has been suspended. Contact support.',
+        });
+      }
       if (byEmail.authUserId && byEmail.authUserId !== authUser.id) {
         throw new ConflictException(
           'An account already exists for this email. Sign in instead.',

@@ -56,6 +56,14 @@ export class AppConfigService {
     return this.config.get<string>('B2B_SERVICE_TOKEN', 'dev-b2b-service-token')!;
   }
 
+  /** Shared with backend for platform-admin → candidate-api calls. */
+  get internalServiceToken(): string {
+    return (
+      this.config.get<string>('INTERNAL_SERVICE_TOKEN') ??
+      this.config.get<string>('B2B_SERVICE_TOKEN', 'dev-b2b-service-token')!
+    );
+  }
+
   get redisUrl(): string {
     return this.config.get<string>('REDIS_URL', 'redis://localhost:6379')!;
   }

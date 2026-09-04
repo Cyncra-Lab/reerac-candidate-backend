@@ -15,6 +15,7 @@ import { NotificationsModule } from './notifications/notifications.module.js';
 import { EventsModule } from './events/events.module.js';
 import { ToolsModule } from './tools/tools.module.js';
 import { AssessmentsModule } from './assessments/assessments.module.js';
+import { InternalAdminModule } from './internal-admin/internal-admin.module.js';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { AssessmentsModule } from './assessments/assessments.module.js';
     EventsModule,
     ToolsModule,
     AssessmentsModule,
+    InternalAdminModule,
   ],
 })
 export class AppModule {}
